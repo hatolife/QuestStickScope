@@ -1,36 +1,26 @@
 #ifdef _WIN32
 
-#include <Windows.h>
+#include "probes/steamvr/ServerProvider.hpp"
 
-#include <atomic>
-#include <cstdint>
+#include <openvr_driver.h>
+
+#include <cstring>
 
 namespace {
 
-constexpr std::uint32_t kProbeAbiVersion = 1;
-std::atomic<bool> g_processAttached{false};
+qss::ServerProvider g_serverProvider;
 
 } // namespace
 
-extern "C" __declspec(dllexport) std::uint32_t QuestStickScopeProbeGetAbiVersion() noexcept {
-	return kProbeAbiVersion;
-}
-
-extern "C" __declspec(dllexport) bool QuestStickScopeProbeIsPassThrough() noexcept {
-	return true;
-}
-
-BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved) {
-	(void)instance;
-	(void)reserved;
-
-	if (reason == DLL_PROCESS_ATTACH) {
-		g_processAttached.store(true, std::memory_order_release);
-	} else if (reason == DLL_PROCESS_DETACH) {
-		g_processAttached.store(false, std::memory_order_release);
+extern "C" __declspec(dllexport) void* HmdDriverFactory(const char* interfaceName, int* returnCode) {
+	if (interfaceName != nullptr && std::strcmp(vr::IServerTrackedDeviceProvider_Version, interfaceName) == 0) {
+		return &g_serverProvider;
 	}
 
-	return TRUE;
+	if (returnCode != nullptr) {
+		*returnCode = vr::VRInitError_Init_InterfaceNotFound;
+	}
+	return nullptr;
 }
 
 #endif
