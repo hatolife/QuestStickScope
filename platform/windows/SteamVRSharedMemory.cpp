@@ -99,6 +99,8 @@ bool SteamVRSharedMemoryWriter::RegisterScalarComponent(
 	const char* path,
 	std::int32_t scalarType,
 	std::int32_t scalarUnits,
+	ControllerHand hand,
+	ScalarSemantic semantic,
 	std::uint32_t& componentIndex
 ) noexcept {
 	if (m_state == nullptr || path == nullptr) {
@@ -118,6 +120,8 @@ bool SteamVRSharedMemoryWriter::RegisterScalarComponent(
 	component.container = container;
 	component.scalarType = scalarType;
 	component.scalarUnits = scalarUnits;
+	component.hand = hand;
+	component.semantic = semantic;
 	component.path.fill('\0');
 	const std::size_t pathLength = std::min(std::strlen(path), component.path.size() - 1);
 	std::memcpy(component.path.data(), path, pathLength);
@@ -209,7 +213,7 @@ std::uint32_t SteamVRSharedMemoryReader::GetComponentCount() const noexcept {
 	);
 }
 
-bool SteamVRSharedMemoryReader::ReadComponent(std::uint32_t index, SharedScalarComponent& output) const noexcept {
+bool SteamVRSharedMemoryReader::ReadComponent(std::uint32_t index, ScalarComponentSnapshot& output) const noexcept {
 	if (m_state == nullptr || index >= GetComponentCount()) {
 		return false;
 	}
@@ -224,6 +228,8 @@ bool SteamVRSharedMemoryReader::ReadComponent(std::uint32_t index, SharedScalarC
 	output.container = component.container;
 	output.scalarType = component.scalarType;
 	output.scalarUnits = component.scalarUnits;
+	output.hand = component.hand;
+	output.semantic = component.semantic;
 	output.path = component.path;
 	const std::uint64_t after = component.stamp.load(std::memory_order_acquire);
 	return before == after;
@@ -248,6 +254,49 @@ bool SteamVRSharedMemoryReader::ReadLatestSample(SharedScalarSample& output) con
 	output = slot.sample;
 	const std::uint64_t after = slot.stamp.load(std::memory_order_acquire);
 	return before == after && output.sequence == sequence;
+}
+
+std::size_t SteamVRSharedMemoryReader::ReadSamples(
+	std::uint64_t& nextSequence,
+	SharedScalarSample* output,
+	std::size_t capacity
+) const noexcept {
+	if (m_state == nullptr || output == nullptr || capacity == 0) {
+		return 0;
+	}
+
+	const std::uint64_t latest = m_state->writeSequence.load(std::memory_order_acquire);
+	if (latest == 0ULL) {
+		return 0;
+	}
+
+	const std::uint64_t earliest = latest > kSteamVRSampleCapacity
+		? latest - kSteamVRSampleCapacity + 1ULL
+		: 1ULL;
+	if (nextSequence == 0ULL || nextSequence < earliest) {
+		nextSequence = earliest;
+	}
+
+	std::size_t count = 0;
+	while (count < capacity && nextSequence <= latest) {
+		const SharedScalarSampleSlot& slot = m_state->samples[(nextSequence - 1ULL) % kSteamVRSampleCapacity];
+		const std::uint64_t before = slot.stamp.load(std::memory_order_acquire);
+		if ((before & 1ULL) != 0ULL || before == 0ULL) {
+			break;
+		}
+
+		const SharedScalarSample sample = slot.sample;
+		const std::uint64_t after = slot.stamp.load(std::memory_order_acquire);
+		if (before != after || sample.sequence != nextSequence) {
+			break;
+		}
+
+		output[count] = sample;
+		++count;
+		++nextSequence;
+	}
+
+	return count;
 }
 
 } // namespace qss

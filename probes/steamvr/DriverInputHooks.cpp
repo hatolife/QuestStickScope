@@ -9,6 +9,7 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <cstring>
 #include <limits>
 
 namespace qss {
@@ -78,6 +79,38 @@ bool FindBinding(std::uint64_t handle, std::uint32_t& sharedIndex) noexcept {
 	return false;
 }
 
+ControllerHand DetectHand(vr::PropertyContainerHandle_t container) noexcept {
+	vr::ETrackedPropertyError error = vr::TrackedProp_Success;
+	const std::int32_t role = vr::VRProperties()->GetInt32Property(
+		container,
+		vr::Prop_ControllerRoleHint_Int32,
+		&error
+	);
+	if (error != vr::TrackedProp_Success) {
+		return ControllerHand::Unknown;
+	}
+	if (role == vr::TrackedControllerRole_LeftHand) {
+		return ControllerHand::Left;
+	}
+	if (role == vr::TrackedControllerRole_RightHand) {
+		return ControllerHand::Right;
+	}
+	return ControllerHand::Unknown;
+}
+
+ScalarSemantic DetectSemantic(const char* path) noexcept {
+	if (path == nullptr) {
+		return ScalarSemantic::Unknown;
+	}
+	if (std::strcmp(path, "/input/joystick/x") == 0 || std::strcmp(path, "/input/thumbstick/x") == 0) {
+		return ScalarSemantic::JoystickX;
+	}
+	if (std::strcmp(path, "/input/joystick/y") == 0 || std::strcmp(path, "/input/thumbstick/y") == 0) {
+		return ScalarSemantic::JoystickY;
+	}
+	return ScalarSemantic::Unknown;
+}
+
 vr::EVRInputError HookCreateScalarComponent(
 	vr::IVRDriverInput* self,
 	vr::PropertyContainerHandle_t container,
@@ -106,6 +139,8 @@ vr::EVRInputError HookCreateScalarComponent(
 		path,
 		static_cast<std::int32_t>(scalarType),
 		static_cast<std::int32_t>(scalarUnits),
+		DetectHand(container),
+		DetectSemantic(path),
 		sharedIndex
 	)) {
 		AddBinding(static_cast<std::uint64_t>(*handle), sharedIndex);
@@ -144,11 +179,7 @@ vr::EVRInputError HookUpdateScalarComponent(
 
 bool InitializeMinHook() noexcept {
 	const MH_STATUS status = MH_Initialize();
-	if (status == MH_OK) {
-		g_minhookInitialized = true;
-		return true;
-	}
-	if (status == MH_ERROR_ALREADY_INITIALIZED) {
+	if (status == MH_OK || status == MH_ERROR_ALREADY_INITIALIZED) {
 		g_minhookInitialized = true;
 		return true;
 	}

@@ -25,6 +25,30 @@ const char* ProbeStateName(qss::ProbeState state) {
 	return "Unknown";
 }
 
+const char* HandName(qss::ControllerHand hand) {
+	switch (hand) {
+	case qss::ControllerHand::Left:
+		return "Left";
+	case qss::ControllerHand::Right:
+		return "Right";
+	case qss::ControllerHand::Unknown:
+		return "Unknown";
+	}
+	return "Unknown";
+}
+
+const char* SemanticName(qss::ScalarSemantic semantic) {
+	switch (semantic) {
+	case qss::ScalarSemantic::JoystickX:
+		return "JoystickX";
+	case qss::ScalarSemantic::JoystickY:
+		return "JoystickY";
+	case qss::ScalarSemantic::Unknown:
+		return "Unknown";
+	}
+	return "Unknown";
+}
+
 int PrintSteamVRStatus() {
 	qss::SteamVRSharedMemoryReader reader;
 	if (!reader.Open()) {
@@ -36,11 +60,13 @@ int PrintSteamVRStatus() {
 	std::cout << "Scalar components: " << reader.GetComponentCount() << '\n';
 
 	for (std::uint32_t index = 0; index < reader.GetComponentCount(); ++index) {
-		qss::SharedScalarComponent component;
+		qss::ScalarComponentSnapshot component;
 		if (!reader.ReadComponent(index, component)) {
 			continue;
 		}
 		std::cout << "[" << index << "] " << component.path.data()
+			<< " hand=" << HandName(component.hand)
+			<< " semantic=" << SemanticName(component.semantic)
 			<< " handle=" << component.handle
 			<< " container=" << component.container << '\n';
 	}

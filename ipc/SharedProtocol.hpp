@@ -22,12 +22,36 @@ enum class ProbeState : std::uint32_t {
 	Error = 3,
 };
 
+enum class ControllerHand : std::uint32_t {
+	Unknown = 0,
+	Left = 1,
+	Right = 2,
+};
+
+enum class ScalarSemantic : std::uint32_t {
+	Unknown = 0,
+	JoystickX = 1,
+	JoystickY = 2,
+};
+
 struct SharedScalarComponent {
 	std::atomic<std::uint64_t> stamp{0};
 	std::uint64_t handle = 0;
 	std::uint64_t container = 0;
 	std::int32_t scalarType = 0;
 	std::int32_t scalarUnits = 0;
+	ControllerHand hand = ControllerHand::Unknown;
+	ScalarSemantic semantic = ScalarSemantic::Unknown;
+	std::array<char, kSteamVRComponentPathCapacity> path{};
+};
+
+struct ScalarComponentSnapshot {
+	std::uint64_t handle = 0;
+	std::uint64_t container = 0;
+	std::int32_t scalarType = 0;
+	std::int32_t scalarUnits = 0;
+	ControllerHand hand = ControllerHand::Unknown;
+	ScalarSemantic semantic = ScalarSemantic::Unknown;
 	std::array<char, kSteamVRComponentPathCapacity> path{};
 };
 

@@ -31,6 +31,8 @@ public:
 		const char* path,
 		std::int32_t scalarType,
 		std::int32_t scalarUnits,
+		ControllerHand hand,
+		ScalarSemantic semantic,
 		std::uint32_t& componentIndex
 	) noexcept;
 	void WriteScalarSample(const SharedScalarSample& sample) noexcept;
@@ -54,8 +56,13 @@ public:
 	ProbeState GetProbeState() const noexcept;
 	std::uint64_t GetHeartbeatTicks() const noexcept;
 	std::uint32_t GetComponentCount() const noexcept;
-	bool ReadComponent(std::uint32_t index, SharedScalarComponent& output) const noexcept;
+	bool ReadComponent(std::uint32_t index, ScalarComponentSnapshot& output) const noexcept;
 	bool ReadLatestSample(SharedScalarSample& output) const noexcept;
+	std::size_t ReadSamples(
+		std::uint64_t& nextSequence,
+		SharedScalarSample* output,
+		std::size_t capacity
+	) const noexcept;
 
 private:
 	HANDLE m_mapping = nullptr;
