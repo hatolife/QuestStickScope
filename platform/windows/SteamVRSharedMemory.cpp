@@ -17,6 +17,62 @@ bool IsValidState(const SteamVRSharedState* state) noexcept {
 		state->version == kSteamVRSharedVersion;
 }
 
+SharedHandCorrection MakeDefaultCorrection() noexcept {
+	SharedHandCorrection correction;
+	correction.outerRadius.fill(1.0F);
+	return correction;
+}
+
+bool ReadCorrectionSnapshot(const SteamVRSharedState* state, CorrectionControlSnapshot& output) noexcept {
+	if (state == nullptr) {
+		return false;
+	}
+
+	const std::uint64_t before = state->correction.stamp.load(std::memory_order_acquire);
+	if ((before & 1ULL) != 0ULL) {
+		return false;
+	}
+
+	output.left = state->correction.left;
+	output.right = state->correction.right;
+	const std::uint64_t after = state->correction.stamp.load(std::memory_order_acquire);
+	if (before != after || (after & 1ULL) != 0ULL) {
+		return false;
+	}
+	output.revision = after;
+	return true;
+}
+
+bool WriteCorrectionSnapshot(
+	SteamVRSharedState* state,
+	const SharedHandCorrection& left,
+	const SharedHandCorrection& right
+) noexcept {
+	if (state == nullptr) {
+		return false;
+	}
+
+	std::uint64_t stamp = state->correction.stamp.load(std::memory_order_acquire);
+	for (;;) {
+		if ((stamp & 1ULL) != 0ULL) {
+			return false;
+		}
+		if (state->correction.stamp.compare_exchange_weak(
+			stamp,
+			stamp + 1ULL,
+			std::memory_order_acq_rel,
+			std::memory_order_acquire
+		)) {
+			break;
+		}
+	}
+
+	state->correction.left = left;
+	state->correction.right = right;
+	state->correction.stamp.store(stamp + 2ULL, std::memory_order_release);
+	return true;
+}
+
 } // namespace
 
 SteamVRSharedMemoryWriter::~SteamVRSharedMemoryWriter() {
@@ -61,6 +117,10 @@ bool SteamVRSharedMemoryWriter::Open() noexcept {
 	m_state->probeState.store(static_cast<std::uint32_t>(ProbeState::Offline), std::memory_order_release);
 	m_state->qpcFrequency = static_cast<std::uint64_t>(MonotonicClock::Frequency());
 	m_state->heartbeatTicks.store(0, std::memory_order_release);
+	m_state->clientHeartbeatTicks.store(0, std::memory_order_release);
+	m_state->correction.stamp.store(0, std::memory_order_release);
+	const SharedHandCorrection defaultCorrection = MakeDefaultCorrection();
+	WriteCorrectionSnapshot(m_state, defaultCorrection, defaultCorrection);
 	m_state->componentCount.store(0, std::memory_order_release);
 	m_state->writeSequence.store(0, std::memory_order_release);
 	m_state->sessionId.fetch_add(1, std::memory_order_acq_rel);
@@ -96,6 +156,17 @@ void SteamVRSharedMemoryWriter::SetHeartbeat(std::int64_t timestampTicks) noexce
 		return;
 	}
 	m_state->heartbeatTicks.store(static_cast<std::uint64_t>(timestampTicks), std::memory_order_release);
+}
+
+std::uint64_t SteamVRSharedMemoryWriter::GetClientHeartbeatTicks() const noexcept {
+	if (m_state == nullptr) {
+		return 0;
+	}
+	return m_state->clientHeartbeatTicks.load(std::memory_order_acquire);
+}
+
+bool SteamVRSharedMemoryWriter::ReadCorrectionControl(CorrectionControlSnapshot& output) const noexcept {
+	return ReadCorrectionSnapshot(m_state, output);
 }
 
 bool SteamVRSharedMemoryWriter::RegisterScalarComponent(
@@ -150,6 +221,71 @@ void SteamVRSharedMemoryWriter::WriteScalarSample(const SharedScalarSample& inpu
 	slot.stamp.store(beginStamp, std::memory_order_release);
 	slot.sample = sample;
 	slot.stamp.store(beginStamp + 1ULL, std::memory_order_release);
+}
+
+SteamVRSharedMemoryController::~SteamVRSharedMemoryController() {
+	Close();
+}
+
+bool SteamVRSharedMemoryController::Open() noexcept {
+	Close();
+	m_mapping = ::OpenFileMappingW(FILE_MAP_ALL_ACCESS, FALSE, kSteamVRSharedMemoryName);
+	if (m_mapping == nullptr) {
+		return false;
+	}
+
+	m_state = static_cast<SteamVRSharedState*>(::MapViewOfFile(
+		m_mapping,
+		FILE_MAP_ALL_ACCESS,
+		0,
+		0,
+		sizeof(SteamVRSharedState)
+	));
+	if (!IsValidState(m_state)) {
+		Close();
+		return false;
+	}
+	return true;
+}
+
+void SteamVRSharedMemoryController::Close() noexcept {
+	if (m_state != nullptr) {
+		CorrectionControlSnapshot snapshot;
+		if (ReadCorrectionSnapshot(m_state, snapshot)) {
+			snapshot.left.enabled = 0;
+			snapshot.right.enabled = 0;
+			WriteCorrectionSnapshot(m_state, snapshot.left, snapshot.right);
+		}
+		m_state->clientHeartbeatTicks.store(0, std::memory_order_release);
+		::UnmapViewOfFile(m_state);
+		m_state = nullptr;
+	}
+	if (m_mapping != nullptr) {
+		::CloseHandle(m_mapping);
+		m_mapping = nullptr;
+	}
+}
+
+bool SteamVRSharedMemoryController::IsOpen() const noexcept {
+	return m_state != nullptr;
+}
+
+void SteamVRSharedMemoryController::SetClientHeartbeat(std::int64_t timestampTicks) noexcept {
+	if (m_state == nullptr) {
+		return;
+	}
+	m_state->clientHeartbeatTicks.store(static_cast<std::uint64_t>(timestampTicks), std::memory_order_release);
+}
+
+bool SteamVRSharedMemoryController::ReadCorrectionControl(CorrectionControlSnapshot& output) const noexcept {
+	return ReadCorrectionSnapshot(m_state, output);
+}
+
+bool SteamVRSharedMemoryController::WriteCorrectionControl(
+	const SharedHandCorrection& left,
+	const SharedHandCorrection& right
+) noexcept {
+	return WriteCorrectionSnapshot(m_state, left, right);
 }
 
 SteamVRSharedMemoryReader::~SteamVRSharedMemoryReader() {

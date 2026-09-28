@@ -1,6 +1,7 @@
 #ifdef _WIN32
 
 #include "core/live/SteamVRLiveState.hpp"
+#include "platform/Clock.hpp"
 #include "platform/windows/SteamVRSharedMemory.hpp"
 
 #include <d3d11.h>
@@ -28,16 +29,27 @@ bool g_swapChainOccluded = false;
 
 struct GuiState {
 	qss::SteamVRSharedMemoryReader reader;
+	qss::SteamVRSharedMemoryController controller;
 	qss::SteamVRLiveState live;
+	qss::SharedHandCorrection leftCorrection{};
+	qss::SharedHandCorrection rightCorrection{};
 	std::uint64_t sessionId = 0;
 	std::uint64_t nextSequence = 0;
 	std::uint32_t configuredComponentCount = 0;
 	bool connected = false;
+	bool correctionLoaded = false;
+	bool correctionDirty = false;
 
 	void ResetSession() {
 		live.Reset();
 		nextSequence = 0;
 		configuredComponentCount = 0;
+		correctionLoaded = false;
+		correctionDirty = false;
+	}
+
+	void MarkCorrectionDirty() {
+		correctionDirty = true;
 	}
 
 	void Update() {
@@ -51,10 +63,31 @@ struct GuiState {
 		}
 
 		connected = true;
+		if (!controller.IsOpen()) {
+			controller.Open();
+		}
+		if (controller.IsOpen()) {
+			controller.SetClientHeartbeat(qss::MonotonicClock::NowTicks());
+		}
+
 		const std::uint64_t currentSessionId = reader.GetSessionId();
 		if (currentSessionId != sessionId) {
 			sessionId = currentSessionId;
 			ResetSession();
+		}
+
+		if (controller.IsOpen() && !correctionLoaded) {
+			qss::CorrectionControlSnapshot control;
+			if (controller.ReadCorrectionControl(control)) {
+				leftCorrection = control.left;
+				rightCorrection = control.right;
+				correctionLoaded = true;
+			}
+		}
+		if (controller.IsOpen() && correctionLoaded && correctionDirty) {
+			if (controller.WriteCorrectionControl(leftCorrection, rightCorrection)) {
+				correctionDirty = false;
+			}
 		}
 
 		const std::uint32_t componentCount = reader.GetComponentCount();
@@ -153,6 +186,44 @@ void DrawPipeline(const GuiState& state) {
 	ImGui::EndChild();
 }
 
+bool DrawCorrectionControls(qss::SharedHandCorrection& correction) {
+	bool changed = false;
+	bool enabled = correction.enabled != 0;
+	if (ImGui::Checkbox("Correction enabled", &enabled)) {
+		correction.enabled = enabled ? 1U : 0U;
+		changed = true;
+	}
+
+	bool centerEnabled = correction.centerOffsetEnabled != 0;
+	if (ImGui::Checkbox("Center offset", &centerEnabled)) {
+		correction.centerOffsetEnabled = centerEnabled ? 1U : 0U;
+		changed = true;
+	}
+	float center[2] = {correction.centerX, correction.centerY};
+	if (ImGui::DragFloat2("Center X/Y", center, 0.001F, -0.5F, 0.5F, "%.4f")) {
+		correction.centerX = center[0];
+		correction.centerY = center[1];
+		changed = true;
+	}
+
+	bool deadzoneEnabled = correction.innerDeadzoneEnabled != 0;
+	if (ImGui::Checkbox("Inner deadzone", &deadzoneEnabled)) {
+		correction.innerDeadzoneEnabled = deadzoneEnabled ? 1U : 0U;
+		changed = true;
+	}
+	if (ImGui::SliderFloat("Deadzone radius", &correction.innerDeadzone, 0.0F, 0.5F, "%.4f")) {
+		changed = true;
+	}
+
+	bool outerEnabled = correction.outerNormalizationEnabled != 0;
+	if (ImGui::Checkbox("Outer normalization", &outerEnabled)) {
+		correction.outerNormalizationEnabled = outerEnabled ? 1U : 0U;
+		changed = true;
+	}
+	ImGui::TextDisabled("Outer table is currently initialized to 1.0; calibration will populate it.");
+	return changed;
+}
+
 void DrawLiveView(GuiState& state) {
 	DrawPipeline(state);
 	ImGui::Spacing();
@@ -170,11 +241,21 @@ void DrawLiveView(GuiState& state) {
 	ImGui::BeginChild("LeftStick", ImVec2(columnWidth, 0.0F), ImGuiChildFlags_Borders);
 	ImGui::SeparatorText("Left Stick");
 	DrawStickPlot("##LeftXY", left);
+	ImGui::PushID("LeftCorrection");
+	if (state.correctionLoaded && DrawCorrectionControls(state.leftCorrection)) {
+		state.MarkCorrectionDirty();
+	}
+	ImGui::PopID();
 	ImGui::EndChild();
 	ImGui::SameLine();
 	ImGui::BeginChild("RightStick", ImVec2(0.0F, 0.0F), ImGuiChildFlags_Borders);
 	ImGui::SeparatorText("Right Stick");
 	DrawStickPlot("##RightXY", right);
+	ImGui::PushID("RightCorrection");
+	if (state.correctionLoaded && DrawCorrectionControls(state.rightCorrection)) {
+		state.MarkCorrectionDirty();
+	}
+	ImGui::PopID();
 	ImGui::EndChild();
 }
 
@@ -445,6 +526,7 @@ int RunGui(HINSTANCE instance) {
 			break;
 		}
 
+		state.Update();
 		if (g_swapChainOccluded && g_swapChain->Present(0, DXGI_PRESENT_TEST) == DXGI_STATUS_OCCLUDED) {
 			::Sleep(10);
 			continue;
@@ -459,7 +541,6 @@ int RunGui(HINSTANCE instance) {
 			CreateRenderTarget();
 		}
 
-		state.Update();
 		ImGui_ImplDX11_NewFrame();
 		ImGui_ImplWin32_NewFrame();
 		ImGui::NewFrame();

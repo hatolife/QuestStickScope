@@ -124,6 +124,7 @@ if(QSS_BUILD_PROBES AND WIN32)
 	)
 	target_compile_definitions(QuestStickScopeSteamVRProbe PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 	target_link_libraries(QuestStickScopeSteamVRProbe PRIVATE
+		qss_core
 		qss_platform
 		qss_windows_ipc
 		qss_openvr_api

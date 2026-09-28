@@ -25,6 +25,8 @@ public:
 
 	void SetProbeState(ProbeState state) noexcept;
 	void SetHeartbeat(std::int64_t timestampTicks) noexcept;
+	std::uint64_t GetClientHeartbeatTicks() const noexcept;
+	bool ReadCorrectionControl(CorrectionControlSnapshot& output) const noexcept;
 	bool RegisterScalarComponent(
 		std::uint64_t handle,
 		std::uint64_t container,
@@ -36,6 +38,29 @@ public:
 		std::uint32_t& componentIndex
 	) noexcept;
 	void WriteScalarSample(const SharedScalarSample& sample) noexcept;
+
+private:
+	HANDLE m_mapping = nullptr;
+	SteamVRSharedState* m_state = nullptr;
+};
+
+class SteamVRSharedMemoryController {
+public:
+	SteamVRSharedMemoryController() = default;
+	~SteamVRSharedMemoryController();
+
+	SteamVRSharedMemoryController(const SteamVRSharedMemoryController&) = delete;
+	SteamVRSharedMemoryController& operator=(const SteamVRSharedMemoryController&) = delete;
+
+	bool Open() noexcept;
+	void Close() noexcept;
+	bool IsOpen() const noexcept;
+	void SetClientHeartbeat(std::int64_t timestampTicks) noexcept;
+	bool ReadCorrectionControl(CorrectionControlSnapshot& output) const noexcept;
+	bool WriteCorrectionControl(
+		const SharedHandCorrection& left,
+		const SharedHandCorrection& right
+	) noexcept;
 
 private:
 	HANDLE m_mapping = nullptr;
