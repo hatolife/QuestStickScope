@@ -12,6 +12,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_library(qss_core
 	core/correction/Correction.cpp
+	core/live/SteamVRLiveState.cpp
 )
 target_include_directories(qss_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 

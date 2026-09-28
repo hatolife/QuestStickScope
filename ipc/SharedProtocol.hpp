@@ -8,12 +8,12 @@
 namespace qss {
 
 inline constexpr std::uint32_t kSteamVRSharedMagic = 0x51535331U;
-inline constexpr std::uint32_t kSteamVRSharedVersion = 1;
+inline constexpr std::uint32_t kSteamVRSharedVersion = 2;
 inline constexpr std::size_t kSteamVRMaxScalarComponents = 256;
 inline constexpr std::size_t kSteamVRSampleCapacity = 8192;
 inline constexpr std::size_t kSteamVRComponentPathCapacity = 96;
 
-inline constexpr wchar_t kSteamVRSharedMemoryName[] = L"Local\\QuestStickScope.SteamVR.v1";
+inline constexpr wchar_t kSteamVRSharedMemoryName[] = L"Local\\QuestStickScope.SteamVR.v2";
 
 enum class ProbeState : std::uint32_t {
 	Offline = 0,

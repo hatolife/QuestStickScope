@@ -1,4 +1,5 @@
 #include "core/correction/Correction.hpp"
+#include "core/live/SteamVRLiveState.hpp"
 #include "platform/Clock.hpp"
 
 #ifdef QSS_WINDOWS_IPC
@@ -7,6 +8,7 @@
 
 #include <cstring>
 #include <iostream>
+#include <iterator>
 
 namespace {
 
@@ -71,13 +73,34 @@ int PrintSteamVRStatus() {
 			<< " container=" << component.container << '\n';
 	}
 
-	qss::SharedScalarSample sample;
-	if (reader.ReadLatestSample(sample)) {
-		std::cout << "Latest scalar: component=" << sample.componentIndex
-			<< " raw=" << sample.rawValue
-			<< " output=" << sample.outputValue
-			<< " sequence=" << sample.sequence << '\n';
+	qss::SteamVRLiveState liveState;
+	for (std::uint32_t index = 0; index < reader.GetComponentCount(); ++index) {
+		qss::ScalarComponentSnapshot component;
+		if (reader.ReadComponent(index, component)) {
+			liveState.ConfigureComponent(index, component);
+		}
 	}
+
+	std::uint64_t nextSequence = 0;
+	qss::SharedScalarSample samples[256]{};
+	for (;;) {
+		const std::size_t count = reader.ReadSamples(nextSequence, samples, std::size(samples));
+		if (count == 0) {
+			break;
+		}
+		for (std::size_t index = 0; index < count; ++index) {
+			liveState.ConsumeSample(samples[index]);
+		}
+	}
+
+	const qss::LiveStickState& left = liveState.GetLeft();
+	const qss::LiveStickState& right = liveState.GetRight();
+	std::cout << "Left stick:  x=" << left.x.rawValue << " y=" << left.y.rawValue
+		<< " available=(" << left.x.available << ", " << left.y.available << ")\n";
+	std::cout << "Right stick: x=" << right.x.rawValue << " y=" << right.y.rawValue
+		<< " available=(" << right.x.available << ", " << right.y.available << ")\n";
+	std::cout << "Observed sequence=" << liveState.GetLastSequence()
+		<< " dropped=" << liveState.GetDroppedSampleCount() << '\n';
 	return 0;
 }
 #endif
