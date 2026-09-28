@@ -3,6 +3,7 @@ cmake_minimum_required(VERSION 3.24)
 project(QuestStickScope LANGUAGES C CXX)
 
 option(QSS_BUILD_APP "Build QuestStickScope application." ON)
+option(QSS_BUILD_GUI "Build QuestStickScope Dear ImGui GUI on Windows." ON)
 option(QSS_BUILD_TESTS "Build QuestStickScope tests." ON)
 option(QSS_BUILD_PROBES "Build QuestStickScope probe modules." ON)
 
@@ -33,11 +34,55 @@ if(WIN32)
 endif()
 
 if(QSS_BUILD_APP)
-	add_executable(QuestStickScope app/main.cpp)
-	target_link_libraries(QuestStickScope PRIVATE qss_core qss_platform)
-	if(WIN32)
-		target_compile_definitions(QuestStickScope PRIVATE QSS_WINDOWS_IPC=1 WIN32_LEAN_AND_MEAN NOMINMAX)
-		target_link_libraries(QuestStickScope PRIVATE qss_windows_ipc)
+	if(WIN32 AND QSS_BUILD_GUI)
+		include(FetchContent)
+
+		FetchContent_Declare(
+			imgui
+			GIT_REPOSITORY https://github.com/ocornut/imgui.git
+			GIT_TAG f1cc2ae15e53a861a874c3034aae6798fde194ab
+			GIT_SHALLOW FALSE
+			SOURCE_SUBDIR qss-no-cmake
+		)
+		FetchContent_MakeAvailable(imgui)
+
+		FetchContent_Declare(
+			implot
+			GIT_REPOSITORY https://github.com/epezent/implot.git
+			GIT_TAG 524f9fcd48d76c13fdf94c5ffbba8787a1ff7e39
+			GIT_SHALLOW FALSE
+			SOURCE_SUBDIR qss-no-cmake
+		)
+		FetchContent_MakeAvailable(implot)
+
+		add_library(qss_gui_deps STATIC
+			${imgui_SOURCE_DIR}/imgui.cpp
+			${imgui_SOURCE_DIR}/imgui_draw.cpp
+			${imgui_SOURCE_DIR}/imgui_tables.cpp
+			${imgui_SOURCE_DIR}/imgui_widgets.cpp
+			${imgui_SOURCE_DIR}/backends/imgui_impl_win32.cpp
+			${imgui_SOURCE_DIR}/backends/imgui_impl_dx11.cpp
+			${implot_SOURCE_DIR}/implot.cpp
+			${implot_SOURCE_DIR}/implot_items.cpp
+		)
+		target_include_directories(qss_gui_deps PUBLIC
+			${imgui_SOURCE_DIR}
+			${imgui_SOURCE_DIR}/backends
+			${implot_SOURCE_DIR}
+		)
+		target_compile_definitions(qss_gui_deps PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+		target_link_libraries(qss_gui_deps PUBLIC d3d11 d3dcompiler dxgi dwmapi gdi32)
+
+		add_executable(QuestStickScope WIN32 app/gui_main.cpp)
+		target_compile_definitions(QuestStickScope PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+		target_link_libraries(QuestStickScope PRIVATE qss_core qss_platform qss_windows_ipc qss_gui_deps)
+
+		add_executable(QuestStickScopeCli app/main.cpp)
+		target_compile_definitions(QuestStickScopeCli PRIVATE QSS_WINDOWS_IPC=1 WIN32_LEAN_AND_MEAN NOMINMAX)
+		target_link_libraries(QuestStickScopeCli PRIVATE qss_core qss_platform qss_windows_ipc)
+	else()
+		add_executable(QuestStickScope app/main.cpp)
+		target_link_libraries(QuestStickScope PRIVATE qss_core qss_platform)
 	endif()
 endif()
 

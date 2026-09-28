@@ -8,12 +8,12 @@
 namespace qss {
 
 inline constexpr std::uint32_t kSteamVRSharedMagic = 0x51535331U;
-inline constexpr std::uint32_t kSteamVRSharedVersion = 2;
+inline constexpr std::uint32_t kSteamVRSharedVersion = 3;
 inline constexpr std::size_t kSteamVRMaxScalarComponents = 256;
 inline constexpr std::size_t kSteamVRSampleCapacity = 8192;
 inline constexpr std::size_t kSteamVRComponentPathCapacity = 96;
 
-inline constexpr wchar_t kSteamVRSharedMemoryName[] = L"Local\\QuestStickScope.SteamVR.v2";
+inline constexpr wchar_t kSteamVRSharedMemoryName[] = L"Local\\QuestStickScope.SteamVR.v3";
 
 enum class ProbeState : std::uint32_t {
 	Offline = 0,
@@ -74,6 +74,7 @@ struct SteamVRSharedState {
 	std::uint32_t magic = kSteamVRSharedMagic;
 	std::uint32_t version = kSteamVRSharedVersion;
 	std::uint64_t qpcFrequency = 0;
+	std::atomic<std::uint64_t> sessionId{0};
 	std::atomic<std::uint32_t> probeState{static_cast<std::uint32_t>(ProbeState::Offline)};
 	std::atomic<std::uint64_t> heartbeatTicks{0};
 	std::atomic<std::uint32_t> componentCount{0};

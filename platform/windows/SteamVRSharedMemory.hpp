@@ -53,6 +53,7 @@ public:
 	bool Open() noexcept;
 	void Close() noexcept;
 	bool IsOpen() const noexcept;
+	std::uint64_t GetSessionId() const noexcept;
 	ProbeState GetProbeState() const noexcept;
 	std::uint64_t GetHeartbeatTicks() const noexcept;
 	std::uint32_t GetComponentCount() const noexcept;

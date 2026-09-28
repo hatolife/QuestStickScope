@@ -53,12 +53,17 @@ bool SteamVRSharedMemoryWriter::Open() noexcept {
 
 	if (!alreadyExists) {
 		new (m_state) SteamVRSharedState{};
-		m_state->qpcFrequency = static_cast<std::uint64_t>(MonotonicClock::Frequency());
 	} else if (!IsValidState(m_state)) {
 		Close();
 		return false;
 	}
 
+	m_state->probeState.store(static_cast<std::uint32_t>(ProbeState::Offline), std::memory_order_release);
+	m_state->qpcFrequency = static_cast<std::uint64_t>(MonotonicClock::Frequency());
+	m_state->heartbeatTicks.store(0, std::memory_order_release);
+	m_state->componentCount.store(0, std::memory_order_release);
+	m_state->writeSequence.store(0, std::memory_order_release);
+	m_state->sessionId.fetch_add(1, std::memory_order_acq_rel);
 	m_state->probeState.store(static_cast<std::uint32_t>(ProbeState::PassThrough), std::memory_order_release);
 	return true;
 }
@@ -187,6 +192,13 @@ void SteamVRSharedMemoryReader::Close() noexcept {
 
 bool SteamVRSharedMemoryReader::IsOpen() const noexcept {
 	return m_state != nullptr;
+}
+
+std::uint64_t SteamVRSharedMemoryReader::GetSessionId() const noexcept {
+	if (m_state == nullptr) {
+		return 0;
+	}
+	return m_state->sessionId.load(std::memory_order_acquire);
 }
 
 ProbeState SteamVRSharedMemoryReader::GetProbeState() const noexcept {
