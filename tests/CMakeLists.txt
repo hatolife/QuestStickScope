@@ -19,6 +19,7 @@ add_executable(qss_core_tests
 	RecordingTests.cpp
 	ReplayTests.cpp
 	RingBufferTests.cpp
+	StickStatisticsTests.cpp
 )
 
 target_link_libraries(qss_core_tests PRIVATE qss_core GTest::gtest_main)
