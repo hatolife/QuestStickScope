@@ -15,6 +15,7 @@ add_library(qss_core
 	core/calibration/Calibration.cpp
 	core/correction/Correction.cpp
 	core/live/SteamVRLiveState.cpp
+	core/recording/Recording.cpp
 )
 target_include_directories(qss_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 

@@ -15,6 +15,7 @@ add_executable(qss_core_tests
 	CalibrationTests.cpp
 	CorrectionTests.cpp
 	LiveStateTests.cpp
+	RecordingTests.cpp
 	RingBufferTests.cpp
 )
 
