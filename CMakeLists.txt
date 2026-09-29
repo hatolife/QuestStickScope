@@ -11,14 +11,25 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+include(FetchContent)
+FetchContent_Declare(
+	nlohmann_json
+	GIT_REPOSITORY https://github.com/nlohmann/json.git
+	GIT_TAG v3.11.3
+	GIT_SHALLOW TRUE
+)
+FetchContent_MakeAvailable(nlohmann_json)
+
 add_library(qss_core
 	core/calibration/Calibration.cpp
+	core/config/CorrectionStore.cpp
 	core/correction/Correction.cpp
 	core/live/SteamVRLiveState.cpp
 	core/recording/Recording.cpp
 	core/recording/Replay.cpp
 )
 target_include_directories(qss_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(qss_core PUBLIC nlohmann_json::nlohmann_json)
 
 add_library(qss_platform
 	platform/Clock.cpp

@@ -13,6 +13,7 @@ FetchContent_MakeAvailable(googletest)
 
 add_executable(qss_core_tests
 	CalibrationTests.cpp
+	CorrectionStoreTests.cpp
 	CorrectionTests.cpp
 	LiveStateTests.cpp
 	RecordingTests.cpp
