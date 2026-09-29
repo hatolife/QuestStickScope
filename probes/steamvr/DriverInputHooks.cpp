@@ -10,6 +10,7 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <limits>
 
@@ -106,6 +107,53 @@ bool FindBinding(std::uint64_t handle, ComponentBindingSnapshot& output) noexcep
 		}
 	}
 	return false;
+}
+
+bool FindOrRegisterUnknownBinding(
+	std::uint64_t handle,
+	ComponentBindingSnapshot& output
+) noexcept {
+	if (FindBinding(handle, output)) {
+		return true;
+	}
+	if (g_sharedMemory == nullptr) {
+		return false;
+	}
+
+	char path[kSteamVRComponentPathCapacity]{};
+	std::snprintf(
+		path,
+		sizeof(path),
+		"<unknown:%llu>",
+		static_cast<unsigned long long>(handle)
+	);
+
+	std::uint32_t sharedIndex = 0;
+	if (!g_sharedMemory->RegisterScalarComponent(
+		handle,
+		0,
+		path,
+		0,
+		0,
+		ControllerHand::Unknown,
+		ScalarSemantic::Unknown,
+		sharedIndex
+	)) {
+		return false;
+	}
+	if (!AddBinding(
+		handle,
+		sharedIndex,
+		ControllerHand::Unknown,
+		ScalarSemantic::Unknown
+	)) {
+		return FindBinding(handle, output);
+	}
+
+	output.sharedIndex = sharedIndex;
+	output.hand = ControllerHand::Unknown;
+	output.semantic = ScalarSemantic::Unknown;
+	return true;
 }
 
 RawStickState* GetRawStick(ControllerHand hand) noexcept {
@@ -267,7 +315,10 @@ vr::EVRInputError HookUpdateScalarComponent(
 ) {
 	const std::int64_t timestampTicks = MonotonicClock::NowTicks();
 	ComponentBindingSnapshot binding;
-	const bool knownComponent = FindBinding(static_cast<std::uint64_t>(component), binding);
+	const bool knownComponent = FindOrRegisterUnknownBinding(
+		static_cast<std::uint64_t>(component),
+		binding
+	);
 
 	bool correctionApplied = false;
 	const float outputValue = knownComponent
@@ -285,6 +336,10 @@ vr::EVRInputError HookUpdateScalarComponent(
 	sample.rawValue = newValue;
 	sample.outputValue = outputValue;
 	sample.timeOffset = timeOffset;
+	if (binding.hand == ControllerHand::Unknown &&
+		binding.semantic == ScalarSemantic::Unknown) {
+		sample.flags |= kSampleFlagUnknownComponent;
+	}
 	if (correctionApplied) {
 		sample.flags |= kSampleFlagCorrectionApplied;
 	}

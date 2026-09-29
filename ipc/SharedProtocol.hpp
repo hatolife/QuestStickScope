@@ -14,6 +14,7 @@ inline constexpr std::size_t kSteamVRSampleCapacity = 8192;
 inline constexpr std::size_t kSteamVRComponentPathCapacity = 96;
 inline constexpr std::size_t kSharedOuterDirectionCount = 64;
 inline constexpr std::uint32_t kSampleFlagCorrectionApplied = 1U << 0;
+inline constexpr std::uint32_t kSampleFlagUnknownComponent = 1U << 1;
 
 inline constexpr wchar_t kSteamVRSharedMemoryName[] = L"Local\\QuestStickScope.SteamVR.v4";
 

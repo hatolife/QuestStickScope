@@ -132,6 +132,8 @@ struct GuiState {
 	qss::SteamVRSharedMemoryController controller;
 	qss::SteamVRLiveState live;
 	std::vector<qss::ScalarComponentSnapshot> components;
+	std::vector<qss::SharedScalarSample> latestComponentSamples;
+	std::vector<bool> componentHasSample;
 	std::deque<qss::StickPointSample> leftHistory;
 	std::deque<qss::StickPointSample> rightHistory;
 	qss::SharedHandCorrection leftCorrection{};
@@ -470,6 +472,8 @@ struct GuiState {
 		nextSequence = 0;
 		configuredComponentCount = 0;
 		components.clear();
+		latestComponentSamples.clear();
+		componentHasSample.clear();
 		leftHistory.clear();
 		rightHistory.clear();
 		correctionLoaded = false;
@@ -536,6 +540,8 @@ struct GuiState {
 
 		const std::uint32_t componentCount = reader.GetComponentCount();
 		components.resize(componentCount);
+		latestComponentSamples.resize(componentCount);
+		componentHasSample.resize(componentCount, false);
 		while (configuredComponentCount < componentCount) {
 			qss::ScalarComponentSnapshot component;
 			if (!reader.ReadComponent(configuredComponentCount, component)) {
@@ -556,6 +562,10 @@ struct GuiState {
 				break;
 			}
 			for (std::size_t index = 0; index < count; ++index) {
+				if (samples[index].componentIndex < latestComponentSamples.size()) {
+					latestComponentSamples[samples[index].componentIndex] = samples[index];
+					componentHasSample[samples[index].componentIndex] = true;
+				}
 				live.ConsumeSample(samples[index]);
 				AppendLiveHistory(samples[index]);
 				CaptureCalibrationSample(samples[index]);
@@ -1004,11 +1014,14 @@ void DrawDiagnosticsView(GuiState& state) {
 	}
 	ImGui::Separator();
 
-	if (ImGui::BeginTable("Components", 6, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY)) {
+	if (ImGui::BeginTable("Components", 9, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY)) {
 		ImGui::TableSetupColumn("Index", ImGuiTableColumnFlags_WidthFixed, 52.0F);
 		ImGui::TableSetupColumn("Hand", ImGuiTableColumnFlags_WidthFixed, 80.0F);
 		ImGui::TableSetupColumn("Semantic", ImGuiTableColumnFlags_WidthFixed, 100.0F);
 		ImGui::TableSetupColumn("Path");
+		ImGui::TableSetupColumn("Raw", ImGuiTableColumnFlags_WidthFixed, 80.0F);
+		ImGui::TableSetupColumn("Output", ImGuiTableColumnFlags_WidthFixed, 80.0F);
+		ImGui::TableSetupColumn("Sequence", ImGuiTableColumnFlags_WidthFixed, 90.0F);
 		ImGui::TableSetupColumn("Handle", ImGuiTableColumnFlags_WidthFixed, 110.0F);
 		ImGui::TableSetupColumn("Container", ImGuiTableColumnFlags_WidthFixed, 110.0F);
 		ImGui::TableHeadersRow();
@@ -1028,8 +1041,23 @@ void DrawDiagnosticsView(GuiState& state) {
 			ImGui::TableSetColumnIndex(3);
 			ImGui::TextUnformatted(component.path.data());
 			ImGui::TableSetColumnIndex(4);
+			if (index < state.componentHasSample.size() && state.componentHasSample[index]) {
+				const qss::SharedScalarSample& sample = state.latestComponentSamples[index];
+				ImGui::Text("%+.5f", sample.rawValue);
+				ImGui::TableSetColumnIndex(5);
+				ImGui::Text("%+.5f", sample.outputValue);
+				ImGui::TableSetColumnIndex(6);
+				ImGui::Text("%llu", static_cast<unsigned long long>(sample.sequence));
+			} else {
+				ImGui::TextDisabled("-");
+				ImGui::TableSetColumnIndex(5);
+				ImGui::TextDisabled("-");
+				ImGui::TableSetColumnIndex(6);
+				ImGui::TextDisabled("-");
+			}
+			ImGui::TableSetColumnIndex(7);
 			ImGui::Text("%llu", static_cast<unsigned long long>(component.handle));
-			ImGui::TableSetColumnIndex(5);
+			ImGui::TableSetColumnIndex(8);
 			ImGui::Text("%llu", static_cast<unsigned long long>(component.container));
 		}
 		ImGui::EndTable();
