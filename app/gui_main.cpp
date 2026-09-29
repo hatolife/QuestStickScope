@@ -9,6 +9,7 @@
 #include "platform/Clock.hpp"
 #include "platform/windows/SteamVRSharedMemory.hpp"
 #include "platform/windows/WindowsMouseObserver.hpp"
+#include "platform/windows/WindowsRawInputObserver.hpp"
 
 #include <d3d11.h>
 #include <ShlObj.h>
@@ -139,6 +140,8 @@ struct GuiState {
 	std::deque<qss::StickPointSample> rightHistory;
 	qss::WindowsMouseObserver windowsMouseObserver;
 	std::deque<qss::WindowsMouseEvent> windowsMouseEvents;
+	qss::WindowsRawInputObserver windowsRawInputObserver;
+	std::deque<qss::WindowsRawMouseEvent> windowsRawMouseEvents;
 	qss::SharedHandCorrection leftCorrection{};
 	qss::SharedHandCorrection rightCorrection{};
 	std::uint64_t sessionId = 0;
@@ -171,8 +174,9 @@ struct GuiState {
 	std::int64_t persistentCorrectionChangedTicks = 0;
 	std::string persistenceStatus;
 
-	GuiState() {
+	explicit GuiState(HWND window) {
 		windowsMouseObserver.Start();
+		windowsRawInputObserver.Start(window);
 		std::string error;
 		const std::filesystem::path path = GetCalibrationPath();
 		if (!path.empty() &&
@@ -499,6 +503,18 @@ struct GuiState {
 		while (windowsMouseEvents.size() > 300) {
 			windowsMouseEvents.pop_front();
 		}
+
+		std::array<qss::WindowsRawMouseEvent, 256> rawEvents{};
+		const std::size_t rawCount = windowsRawInputObserver.ReadEvents(
+			rawEvents.data(),
+			rawEvents.size()
+		);
+		for (std::size_t index = 0; index < rawCount; ++index) {
+			windowsRawMouseEvents.push_back(rawEvents[index]);
+		}
+		while (windowsRawMouseEvents.size() > 300) {
+			windowsRawMouseEvents.pop_front();
+		}
 	}
 
 	void Update() {
@@ -745,8 +761,9 @@ void DrawPipeline(const GuiState& state) {
 	ImGui::SameLine();
 	ImGui::Text("SteamVR S0: %s", state.connected ? ProbeStateName(state.reader.GetProbeState()) : "Offline");
 	ImGui::Text(
-		"Windows W0: %s",
-		state.windowsMouseObserver.IsRunning() ? "Mouse observation active" : "Unavailable"
+		"Windows W0: LL Hook %s / Raw Input %s",
+		state.windowsMouseObserver.IsRunning() ? "active" : "unavailable",
+		state.windowsRawInputObserver.IsRunning() ? "active" : "unavailable"
 	);
 	ImGui::TextDisabled("Unobserved layers remain explicitly unobserved. No inferred values are shown.");
 	ImGui::EndChild();
@@ -1095,10 +1112,61 @@ void DrawWindowsInputDiagnostics(GuiState& state) {
 	}
 }
 
+void DrawRawInputDiagnostics(GuiState& state) {
+	ImGui::SeparatorText("Windows W0 / Raw Input Mouse");
+	ImGui::Text(
+		"Observer: %s   Buffered events: %zu   Dropped: %zu",
+		state.windowsRawInputObserver.IsRunning() ? "Active" : "Unavailable",
+		state.windowsRawMouseEvents.size(),
+		state.windowsRawInputObserver.DroppedCount()
+	);
+	ImGui::TextDisabled("Compare this with LL Hook events to determine how Virtual Desktop reaches Windows.");
+
+	if (ImGui::BeginTable(
+		"WindowsRawMouseEvents",
+		7,
+		ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY,
+		ImVec2(0.0F, 220.0F)
+	)) {
+		ImGui::TableSetupColumn("dX", ImGuiTableColumnFlags_WidthFixed, 65.0F);
+		ImGui::TableSetupColumn("dY", ImGuiTableColumnFlags_WidthFixed, 65.0F);
+		ImGui::TableSetupColumn("Wheel", ImGuiTableColumnFlags_WidthFixed, 70.0F);
+		ImGui::TableSetupColumn("Buttons", ImGuiTableColumnFlags_WidthFixed, 80.0F);
+		ImGui::TableSetupColumn("Mouse flags", ImGuiTableColumnFlags_WidthFixed, 90.0F);
+		ImGui::TableSetupColumn("Device", ImGuiTableColumnFlags_WidthFixed, 120.0F);
+		ImGui::TableSetupColumn("Time", ImGuiTableColumnFlags_WidthFixed, 120.0F);
+		ImGui::TableHeadersRow();
+
+		const std::size_t first = state.windowsRawMouseEvents.size() > 100
+			? state.windowsRawMouseEvents.size() - 100
+			: 0;
+		for (std::size_t index = first; index < state.windowsRawMouseEvents.size(); ++index) {
+			const qss::WindowsRawMouseEvent& event = state.windowsRawMouseEvents[index];
+			ImGui::TableNextRow();
+			ImGui::TableSetColumnIndex(0);
+			ImGui::Text("%d", event.deltaX);
+			ImGui::TableSetColumnIndex(1);
+			ImGui::Text("%d", event.deltaY);
+			ImGui::TableSetColumnIndex(2);
+			ImGui::Text("%d", event.wheelDelta);
+			ImGui::TableSetColumnIndex(3);
+			ImGui::Text("0x%04X", event.buttonFlags);
+			ImGui::TableSetColumnIndex(4);
+			ImGui::Text("0x%04X", event.mouseFlags);
+			ImGui::TableSetColumnIndex(5);
+			ImGui::Text("0x%llX", static_cast<unsigned long long>(event.device));
+			ImGui::TableSetColumnIndex(6);
+			ImGui::Text("%lld", static_cast<long long>(event.timestampTicks));
+		}
+		ImGui::EndTable();
+	}
+}
+
 void DrawDiagnosticsView(GuiState& state) {
 	if (!state.connected) {
 		ImGui::TextDisabled("SteamVR Probe: Offline");
 		DrawWindowsInputDiagnostics(state);
+		DrawRawInputDiagnostics(state);
 		return;
 	}
 
@@ -1162,6 +1230,7 @@ void DrawDiagnosticsView(GuiState& state) {
 	}
 
 	DrawWindowsInputDiagnostics(state);
+	DrawRawInputDiagnostics(state);
 }
 
 void DrawPlaceholder(const char* title, const char* message) {
@@ -1288,6 +1357,7 @@ void CleanupDeviceD3D() {
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND window, UINT message, WPARAM wParam, LPARAM lParam);
 
 LRESULT WINAPI WndProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
+	qss::WindowsRawInputObserver::HandleWindowMessage(message, wParam, lParam);
 	if (ImGui_ImplWin32_WndProcHandler(window, message, wParam, lParam)) {
 		return TRUE;
 	}
@@ -1371,7 +1441,7 @@ int RunGui(HINSTANCE instance) {
 	ImGui_ImplWin32_Init(window);
 	ImGui_ImplDX11_Init(g_device, g_deviceContext);
 
-	GuiState state;
+	GuiState state(window);
 	bool done = false;
 	while (!done) {
 		MSG message{};
