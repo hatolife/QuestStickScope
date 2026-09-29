@@ -916,7 +916,7 @@ void DrawLiveView(GuiState& state) {
 
 	const float availableWidth = ImGui::GetContentRegionAvail().x;
 	const float columnWidth = std::max(320.0F, (availableWidth - 12.0F) * 0.5F);
-	ImGui::BeginChild("LeftStick", ImVec2(columnWidth, 0.0F), ImGuiChildFlags_Borders);
+	ImGui::BeginChild("LeftStick", ImVec2(columnWidth, 500.0F), ImGuiChildFlags_Borders);
 	ImGui::SeparatorText("Left Stick");
 	DrawStickPlot("##LeftXY", left, &state.leftHistory);
 	ImGui::PushID("LeftCorrection");
@@ -926,7 +926,7 @@ void DrawLiveView(GuiState& state) {
 	ImGui::PopID();
 	ImGui::EndChild();
 	ImGui::SameLine();
-	ImGui::BeginChild("RightStick", ImVec2(0.0F, 0.0F), ImGuiChildFlags_Borders);
+	ImGui::BeginChild("RightStick", ImVec2(0.0F, 500.0F), ImGuiChildFlags_Borders);
 	ImGui::SeparatorText("Right Stick");
 	DrawStickPlot("##RightXY", right, &state.rightHistory);
 	ImGui::PushID("RightCorrection");
@@ -1471,7 +1471,7 @@ void DrawDiagnosticsView(GuiState& state) {
 	}
 	ImGui::Separator();
 
-	if (ImGui::BeginTable("Components", 9, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY)) {
+	if (ImGui::BeginTable("Components", 9, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY, ImVec2(0.0F, 260.0F))) {
 		ImGui::TableSetupColumn("Index", ImGuiTableColumnFlags_WidthFixed, 52.0F);
 		ImGui::TableSetupColumn("Hand", ImGuiTableColumnFlags_WidthFixed, 80.0F);
 		ImGui::TableSetupColumn("Semantic", ImGuiTableColumnFlags_WidthFixed, 100.0F);
