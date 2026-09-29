@@ -1,8 +1,8 @@
 # SteamVR Probe
 
-SteamVR Probe は OpenVR の server driver として `vrserver.exe` にロードされ、`IVRDriverInput` の scalar component 作成と更新を観測する。
+SteamVR Probe は OpenVR の server driver として `vrserver.exe` にロードされ、`IVRDriverInput` の scalar component 作成と更新を観測・必要に応じて補正する。
 
-現段階では入力値を変更しない。観測に失敗した場合も元の `IVRDriverInput::UpdateScalarComponent` をそのまま呼び、SteamVR の入力経路を維持する。
+VRChat.exe 自体には注入・フック・メモリ書き換えを行わない。
 
 ## 仕組み
 
@@ -10,14 +10,47 @@ SteamVR Probe は OpenVR の server driver として `vrserver.exe` にロード
 2. `HmdDriverFactory` が `IServerTrackedDeviceProvider` を返す。
 3. `Init` で OpenVR server driver context を初期化する。
 4. runtime が提供する `IVRDriverInput` の vtable から `CreateScalarComponent` と `UpdateScalarComponent` の実装アドレスを取得する。
-5. MinHook で両関数を観測する。
+5. MinHook で両関数をフックする。
 6. component 作成時に path、handle、property container、scalar type、units を固定長テーブルへ登録する。
-7. property container の `Prop_ControllerRoleHint_Int32` から Left / Right を判定する。取得できない場合は `Unknown` のまま保持する。
-8. `/input/joystick/x`、`/input/joystick/y`、`/input/thumbstick/x`、`/input/thumbstick/y` をスティック X/Y として分類する。それ以外は `Unknown` のまま保持する。
-9. scalar 更新時は QPC timestamp と値を共有メモリの固定長リングへ書く。
-10. `QuestStickScope.exe --steamvr-status` が共有メモリを読み、観測状態を表示する。
+7. property container の `Prop_ControllerRoleHint_Int32` から Left / Right を判定する。取得できない場合は `Unknown` とする。
+8. `/input/joystick/x`、`/input/joystick/y`、`/input/thumbstick/x`、`/input/thumbstick/y` をスティック X/Y として分類する。
+9. component作成を捕捉できなかったhandleは、最初の更新時に `<unknown:handle>` として登録する。
+10. scalar 更新時に raw 値を記録する。
+11. GUI heartbeat と有効な補正設定がある場合だけ補正を計算する。
+12. 元の `UpdateScalarComponent` へ補正後値を渡す。
+13. raw/output、QPC timestamp、sequence、flags を共有メモリへ書く。
 
-共有メモリ名は `Local\QuestStickScope.SteamVR.v1` とする。
+共有メモリは固定長で、入力更新処理をGUI待ちにしない。
+
+## 補正
+
+左右ごとに次を持つ。
+
+```text
+RAW
+ |
+ +-- Center Offset
+ |
+ +-- radial Inner Deadzone
+ |
+ +-- 64-direction Outer Normalization
+ |
+ +-- Clamp
+ |
+OUTPUT
+```
+
+GUIから設定を共有メモリへ配布する。
+
+GUI heartbeat が2秒以上途絶えた場合、Probe は補正設定が有効でも raw 値をそのまま通す。
+
+## Unknown component
+
+SteamVR のdriverロード順によっては、QuestStickScope がロードされる前に別driverが scalar component を作成済みの可能性がある。
+
+その場合でも `UpdateScalarComponent` は観測できるため、未知handleを自動登録して値を失わない。
+
+Unknown component には左右・意味を推測して割り当てない。Diagnostics で値変化を確認し、実測で識別する。
 
 ## ビルド
 
@@ -28,7 +61,7 @@ cmake --preset windows-debug
 cmake --build --preset windows-debug
 ```
 
-Probe の driver root は次に生成される。
+Probe の driver root:
 
 ```text
 build/windows-debug/steamvr-driver/queststickscope/
@@ -40,30 +73,36 @@ build/windows-debug/steamvr-driver/queststickscope/
 
 ## SteamVR へ登録
 
-SteamVR を終了した状態で実行する。
+SteamVR を終了してから実行する。
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File tools/Register-SteamVRDriver.ps1
 ```
 
-Steam ライブラリが標準位置でない場合は `-SteamVRDir` を指定する。
+Steam ライブラリが標準位置でない場合:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File tools/Register-SteamVRDriver.ps1 `
 	-SteamVRDir "D:\SteamLibrary\steamapps\common\SteamVR"
 ```
 
-登録後に SteamVR を起動する。
+登録後に SteamVR を再起動する。
 
 ## 観測確認
 
+GUI:
+
 ```powershell
-build/windows-debug/QuestStickScope.exe --steamvr-status
+build/windows-debug/QuestStickScope.exe
 ```
 
-Probe が正常にロードされている場合、状態と scalar component 一覧が表示される。
+CLI:
 
-Virtual Desktop 接続後に左右スティックを操作し、左右と X/Y が期待どおり分類されるか確認する。`Unknown` が残る場合は、その component path と property 情報を Diagnostics の対象として扱い、推測で分類しない。
+```powershell
+build/windows-debug/QuestStickScopeCli.exe --steamvr-status
+```
+
+Diagnostics では component path、左右、semantic、raw/output、sequence を確認できる。
 
 ## 登録解除
 
@@ -75,9 +114,12 @@ powershell -ExecutionPolicy Bypass -File tools/Unregister-SteamVRDriver.ps1
 
 ## フェイルセーフ
 
-- Hook 導入前はパススルー状態とする。
-- Hook 導入に失敗しても driver 自体の初期化は成功扱いとし、既存入力を妨げない。
-- scalar 更新 hook は元関数を無加工の値で呼ぶ。
-- 高頻度更新では同期ログを出力しない。
-- 共有メモリが利用できない場合は hook を導入しない。
-- `Cleanup` では hook を先に解除してから共有メモリと OpenVR context を破棄する。
+- Hook 導入前はパススルー。
+- Hook 導入失敗時も既存入力を妨げない。
+- GUI heartbeat がない場合はパススルー。
+- 補正設定を正常に読めない場合はパススルー。
+- Unknown component へ補正を適用しない。
+- NaN / Inf は補正パイプライン外へ出さない。
+- 高頻度更新で同期ログを出さない。
+- 共有メモリ送信で入力スレッドを待たせない。
+- `Cleanup` では Hook を先に解除してから共有メモリと OpenVR context を破棄する。

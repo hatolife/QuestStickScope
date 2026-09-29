@@ -2,24 +2,61 @@
 
 QuestStickScope は、Meta Quest 3 + Touch Plus Controller + Virtual Desktop + SteamVR + VRChat に対象を絞り、Windows PC 側でスティック入力を観測・記録・解析し、入力経路上の変化点を特定して補正するためのツールです。
 
-現在は開発初期段階です。仕様と開発順序は [PLAN.md](PLAN.md) を基準にします。
+仕様と開発順序は [PLAN.md](PLAN.md) を基準にします。
 
 ## 現在の実装
 
-- C++20 / CMake / Ninja のビルド基盤
-- スティック入力の共通データ型
+### SteamVR S0
+
+- OpenVR server driver として `vrserver.exe` にロードする SteamVR Probe
+- `IVRDriverInput::CreateScalarComponent` / `UpdateScalarComponent` の観測
+- Controller role と component path による Left / Right / X / Y 分類
+- component 作成を取り逃した場合の unknown handle 観測
+- QPC timestamp、sequence、raw/output を共有メモリへ転送
 - Center Offset
 - 2次元 Inner Deadzone
-- 方向別 Outer Normalization
+- 64方向 Directional Outer Normalization
 - Clamp
-- 固定長 SPSC リングバッファ
-- Windows の QPC を使う単調増加クロック
-- SteamVR server driver としてロード可能な Probe
-- `IVRDriverInput` scalar component の作成・更新観測
-- Controller role と component path による左右/X/Y分類
-- Probe → GUI 用の固定長共有メモリプロトコル
-- `--steamvr-status` による Probe/component/最新値確認
-- 補正処理とリングバッファの GoogleTest
+- GUI heartbeat が途絶えた場合の自動パススルー
+- 補正前後の同時記録
+
+### GUI / Diagnostics
+
+- Dear ImGui + ImPlot + Direct3D 11
+- 左右スティック XY 表示
+- 直近軌跡
+- 10秒時系列 Raw X/Y / Output X/Y
+- 平均、最小最大、標準偏差、半径、更新Hz
+- scalar component 一覧
+- componentごとの最新 raw/output/sequence
+- sample gap 検出
+- Windows W0 の Low Level Mouse Hook 観測
+- Mouse move / wheel / button / injected flag の診断
+
+### Calibration
+
+- Center 3秒計測
+- 中央値による中心推定
+- 中心ノイズ P99
+- 推奨 deadzone 生成
+- 64方向 Outer Range 計測
+- 方向ごとの95パーセンタイル外周
+- 未取得方向の円周補間
+- 左右個別適用
+- `%LOCALAPPDATA%\QuestStickScope\calibration.json` への保存・復元
+- 設定破損時は補正OFFの安全な既定値へフォールバック
+
+### Record / Replay
+
+- version付き `.qssrec` バイナリ形式
+- component table
+- timestamp / sequence / raw / output / flags
+- 記録開始時の補正設定とProbe状態
+- 録画開始時の左右XY状態
+- `%LOCALAPPDATA%\QuestStickScope\recordings\` への自動保存
+- 保存済み記録のGUI読込
+- Replay位置の移動
+- 現在の補正設定を同じ記録へ再適用
 
 SteamVR Probe の詳細は [docs/steamvr-probe.md](docs/steamvr-probe.md) を参照してください。
 
@@ -41,22 +78,63 @@ cmake --build --preset windows-release
 ctest --preset windows-release
 ```
 
-## SteamVR Probe の確認
+Windows Debug では主に次が生成されます。
 
-ビルド後、SteamVR を終了した状態で driver を登録します。
+```text
+build/windows-debug/
+├─ QuestStickScope.exe
+├─ QuestStickScopeCli.exe
+└─ steamvr-driver/
+   └─ queststickscope/
+      ├─ driver.vrdrivermanifest
+      └─ bin/
+         └─ win64/
+            └─ driver_queststickscope.dll
+```
+
+## SteamVR Probe の登録
+
+SteamVR を終了してから実行します。
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File tools/Register-SteamVRDriver.ps1
 ```
 
-SteamVR と Virtual Desktop を起動した後、観測状態を表示します。
+SteamVR と Virtual Desktop を起動した後、GUIを起動します。
 
 ```powershell
-build/windows-debug/QuestStickScope.exe --steamvr-status
+build/windows-debug/QuestStickScope.exe
 ```
 
-現在の Probe は観測専用です。入力値は変更しません。
+CLIで Probe 状態を確認する場合:
+
+```powershell
+build/windows-debug/QuestStickScopeCli.exe --steamvr-status
+```
+
+登録解除:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools/Unregister-SteamVRDriver.ps1
+```
+
+## 最初の実機確認
+
+1. QuestStickScope の SteamVR driver を登録する。
+2. SteamVR を再起動する。
+3. Virtual Desktop で Quest 3 を接続する。
+4. QuestStickScope を起動する。
+5. Diagnostics で `SteamVR Probe: Observing` を確認する。
+6. 左右スティックを動かし、Left / Right / Joystick X/Y が更新されるか確認する。
+7. 分類できない scalar がある場合は `<unknown:handle>` の値変化を確認する。
+8. Live で左右XYと時系列が更新されることを確認する。
+9. 補正を有効化し、Raw と Output が変化することを確認する。
+10. QuestStickScope を終了し、入力が元のパススルーへ戻ることを確認する。
+
+Virtual Desktop の仮想デスクトップ側は、SteamVRなしでも Diagnostics の Windows W0 / Mouse でイベントを観測できます。
 
 ## 方針
 
-QuestStickScope は汎用VR入力ツールを目指しません。未観測区間を推測値で埋めず、直接観測できる境界を増やしながら原因の切り分けと補正を進めます。
+QuestStickScope は汎用VR入力ツールを目指しません。
+
+未観測区間を推測値で埋めず、直接観測できる境界を増やしながら原因の切り分けと補正を進めます。
