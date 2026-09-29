@@ -1098,6 +1098,7 @@ void DrawWindowsInputDiagnostics(GuiState& state) {
 void DrawDiagnosticsView(GuiState& state) {
 	if (!state.connected) {
 		ImGui::TextDisabled("SteamVR Probe: Offline");
+		DrawWindowsInputDiagnostics(state);
 		return;
 	}
 
