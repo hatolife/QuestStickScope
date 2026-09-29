@@ -342,8 +342,25 @@ struct GuiState {
 		calibrationMode = CalibrationMode::None;
 	}
 
+	void UpdateCenterCalibration() {
+		if (calibrationMode != CalibrationMode::Center) {
+			return;
+		}
+		const qss::LiveStickState& stick = calibrationHand == qss::ControllerHand::Left
+			? live.GetLeft()
+			: live.GetRight();
+		if (stick.x.available && stick.y.available && calibrationSamples.size() < 500000) {
+			calibrationSamples.push_back({stick.x.rawValue, stick.y.rawValue});
+		}
+
+		const std::int64_t elapsed = qss::MonotonicClock::NowTicks() - calibrationStartTicks;
+		if (elapsed >= qss::MonotonicClock::Frequency() * 3) {
+			FinalizeCenterCalibration();
+		}
+	}
+
 	void CaptureCalibrationSample(const qss::SharedScalarSample& sample) {
-		if (calibrationMode == CalibrationMode::None ||
+		if (calibrationMode != CalibrationMode::Outer ||
 			sample.componentIndex >= components.size()) {
 			return;
 		}
@@ -362,13 +379,6 @@ struct GuiState {
 		}
 		if (calibrationSamples.size() < 500000) {
 			calibrationSamples.push_back({stick.x.rawValue, stick.y.rawValue});
-		}
-
-		if (calibrationMode == CalibrationMode::Center) {
-			const std::int64_t elapsed = qss::MonotonicClock::NowTicks() - calibrationStartTicks;
-			if (elapsed >= qss::MonotonicClock::Frequency() * 3) {
-				FinalizeCenterCalibration();
-			}
 		}
 	}
 
@@ -702,6 +712,7 @@ struct GuiState {
 				}
 			}
 		}
+		UpdateCenterCalibration();
 	}
 };
 
