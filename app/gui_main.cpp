@@ -1,6 +1,7 @@
 #ifdef _WIN32
 
 #include "core/calibration/Calibration.hpp"
+#include "core/config/CorrectionStore.hpp"
 #include "core/live/SteamVRLiveState.hpp"
 #include "core/recording/Recording.hpp"
 #include "core/recording/Replay.hpp"
@@ -38,15 +39,25 @@ UINT g_resizeWidth = 0;
 UINT g_resizeHeight = 0;
 bool g_swapChainOccluded = false;
 
-std::filesystem::path GetRecordingDirectory() {
+std::filesystem::path GetDataDirectory() {
 	PWSTR localAppData = nullptr;
 	if (FAILED(::SHGetKnownFolderPath(FOLDERID_LocalAppData, KF_FLAG_DEFAULT, nullptr, &localAppData))) {
 		return {};
 	}
 	const std::filesystem::path directory =
-		std::filesystem::path(localAppData) / L"QuestStickScope" / L"recordings";
+		std::filesystem::path(localAppData) / L"QuestStickScope";
 	::CoTaskMemFree(localAppData);
 	return directory;
+}
+
+std::filesystem::path GetRecordingDirectory() {
+	const std::filesystem::path dataDirectory = GetDataDirectory();
+	return dataDirectory.empty() ? std::filesystem::path{} : dataDirectory / L"recordings";
+}
+
+std::filesystem::path GetCalibrationPath() {
+	const std::filesystem::path dataDirectory = GetDataDirectory();
+	return dataDirectory.empty() ? std::filesystem::path{} : dataDirectory / L"calibration.json";
 }
 
 std::filesystem::path MakeRecordingFilePath() {
@@ -146,6 +157,51 @@ struct GuiState {
 	qss::OuterCalibrationResult leftOuterResult;
 	qss::OuterCalibrationResult rightOuterResult;
 	std::string calibrationStatus;
+	bool persistentCorrectionAvailable = false;
+	bool persistentCorrectionDirty = false;
+	std::int64_t persistentCorrectionChangedTicks = 0;
+	std::string persistenceStatus;
+
+	GuiState() {
+		std::string error;
+		const std::filesystem::path path = GetCalibrationPath();
+		if (!path.empty() &&
+			qss::LoadCorrectionSettings(path, leftCorrection, rightCorrection, &error)) {
+			persistentCorrectionAvailable = true;
+			persistenceStatus = "Loaded calibration.json.";
+		} else {
+			leftCorrection = qss::MakeDefaultSharedCorrection();
+			rightCorrection = qss::MakeDefaultSharedCorrection();
+			if (!error.empty() && std::filesystem::exists(path)) {
+				persistenceStatus = "Ignored invalid calibration.json: " + error;
+			}
+		}
+	}
+
+	bool SavePersistentCorrection() {
+		if (!persistentCorrectionDirty) {
+			return true;
+		}
+		const std::filesystem::path path = GetCalibrationPath();
+		if (path.empty()) {
+			persistenceStatus = "Failed to resolve calibration.json path.";
+			return false;
+		}
+		std::string error;
+		if (!qss::SaveCorrectionSettings(
+			path,
+			leftCorrection,
+			rightCorrection,
+			&error
+		)) {
+			persistenceStatus = "Failed to save calibration.json: " + error;
+			return false;
+		}
+		persistentCorrectionDirty = false;
+		persistentCorrectionAvailable = true;
+		persistenceStatus = "Saved calibration.json.";
+		return true;
+	}
 
 	void StartCenterCalibration(qss::ControllerHand hand) {
 		calibrationMode = CalibrationMode::Center;
@@ -381,6 +437,8 @@ struct GuiState {
 
 	void MarkCorrectionDirty() {
 		correctionDirty = true;
+		persistentCorrectionDirty = true;
+		persistentCorrectionChangedTicks = qss::MonotonicClock::NowTicks();
 	}
 
 	void Update() {
@@ -411,16 +469,27 @@ struct GuiState {
 		}
 
 		if (controller.IsOpen() && !correctionLoaded) {
-			qss::CorrectionControlSnapshot control;
-			if (controller.ReadCorrectionControl(control)) {
-				leftCorrection = control.left;
-				rightCorrection = control.right;
+			if (persistentCorrectionAvailable) {
 				correctionLoaded = true;
+				correctionDirty = true;
+			} else {
+				qss::CorrectionControlSnapshot control;
+				if (controller.ReadCorrectionControl(control)) {
+					leftCorrection = control.left;
+					rightCorrection = control.right;
+					correctionLoaded = true;
+				}
 			}
 		}
 		if (controller.IsOpen() && correctionLoaded && correctionDirty) {
 			if (controller.WriteCorrectionControl(leftCorrection, rightCorrection)) {
 				correctionDirty = false;
+			}
+		}
+		if (persistentCorrectionDirty) {
+			const std::int64_t now = qss::MonotonicClock::NowTicks();
+			if (now - persistentCorrectionChangedTicks >= qss::MonotonicClock::Frequency() / 2) {
+				SavePersistentCorrection();
 			}
 		}
 
@@ -795,6 +864,9 @@ void DrawDiagnosticsView(GuiState& state) {
 	ImGui::Text("Components: %u", state.reader.GetComponentCount());
 	ImGui::Text("Observed sequence: %llu", static_cast<unsigned long long>(state.live.GetLastSequence()));
 	ImGui::Text("Detected sample gaps: %llu", static_cast<unsigned long long>(state.live.GetDroppedSampleCount()));
+	if (!state.persistenceStatus.empty()) {
+		ImGui::TextWrapped("Settings: %s", state.persistenceStatus.c_str());
+	}
 	ImGui::Separator();
 
 	if (ImGui::BeginTable("Components", 6, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY)) {
@@ -1083,6 +1155,9 @@ int RunGui(HINSTANCE instance) {
 
 	if (state.recordingActive) {
 		state.StopRecording();
+	}
+	if (state.persistentCorrectionDirty) {
+		state.SavePersistentCorrection();
 	}
 	ImGui_ImplDX11_Shutdown();
 	ImGui_ImplWin32_Shutdown();

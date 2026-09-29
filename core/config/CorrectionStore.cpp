@@ -4,6 +4,7 @@
 
 #include <cmath>
 #include <fstream>
+#include <stdexcept>
 
 namespace qss {
 namespace {
