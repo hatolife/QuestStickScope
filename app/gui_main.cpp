@@ -1,5 +1,6 @@
 #ifdef _WIN32
 
+#include "core/analysis/StickStatistics.hpp"
 #include "core/calibration/Calibration.hpp"
 #include "core/config/CorrectionStore.hpp"
 #include "core/live/SteamVRLiveState.hpp"
@@ -22,6 +23,7 @@
 #include <cstdint>
 #include <climits>
 #include <cwchar>
+#include <deque>
 #include <filesystem>
 #include <functional>
 #include <iterator>
@@ -130,6 +132,8 @@ struct GuiState {
 	qss::SteamVRSharedMemoryController controller;
 	qss::SteamVRLiveState live;
 	std::vector<qss::ScalarComponentSnapshot> components;
+	std::deque<qss::StickPointSample> leftHistory;
+	std::deque<qss::StickPointSample> rightHistory;
 	qss::SharedHandCorrection leftCorrection{};
 	qss::SharedHandCorrection rightCorrection{};
 	std::uint64_t sessionId = 0;
@@ -308,6 +312,41 @@ struct GuiState {
 		calibrationStatus = "Calibration values copied to correction settings.";
 	}
 
+	void AppendLiveHistory(const qss::SharedScalarSample& sample) {
+		if (sample.componentIndex >= components.size()) {
+			return;
+		}
+		const qss::ScalarComponentSnapshot& component = components[sample.componentIndex];
+		if (component.semantic != qss::ScalarSemantic::JoystickY) {
+			return;
+		}
+
+		const qss::LiveStickState* stick = nullptr;
+		std::deque<qss::StickPointSample>* history = nullptr;
+		if (component.hand == qss::ControllerHand::Left) {
+			stick = &live.GetLeft();
+			history = &leftHistory;
+		} else if (component.hand == qss::ControllerHand::Right) {
+			stick = &live.GetRight();
+			history = &rightHistory;
+		}
+		if (stick == nullptr || history == nullptr ||
+			!stick->x.available || !stick->y.available) {
+			return;
+		}
+
+		history->push_back({
+			sample.timestampTicks,
+			{stick->x.rawValue, stick->y.rawValue},
+			{stick->x.outputValue, stick->y.outputValue},
+		});
+		const std::int64_t windowTicks = qss::MonotonicClock::Frequency() * 10;
+		while (!history->empty() &&
+			sample.timestampTicks - history->front().timestampTicks > windowTicks) {
+			history->pop_front();
+		}
+	}
+
 	void CaptureComponents(qss::RecordingData& recording) {
 		const std::uint32_t count = reader.GetComponentCount();
 		recording.components.resize(count);
@@ -431,6 +470,8 @@ struct GuiState {
 		nextSequence = 0;
 		configuredComponentCount = 0;
 		components.clear();
+		leftHistory.clear();
+		rightHistory.clear();
 		correctionLoaded = false;
 		correctionDirty = false;
 	}
@@ -516,6 +557,7 @@ struct GuiState {
 			}
 			for (std::size_t index = 0; index < count; ++index) {
 				live.ConsumeSample(samples[index]);
+				AppendLiveHistory(samples[index]);
 				CaptureCalibrationSample(samples[index]);
 				if (recordingActive && samples[index].componentIndex < activeRecording.components.size()) {
 					activeRecording.samples.push_back(samples[index]);
@@ -563,7 +605,11 @@ const char* SemanticName(qss::ScalarSemantic semantic) {
 	return "Unknown";
 }
 
-void DrawStickPlot(const char* label, const qss::LiveStickState& stick) {
+void DrawStickPlot(
+	const char* label,
+	const qss::LiveStickState& stick,
+	const std::deque<qss::StickPointSample>* history = nullptr
+) {
 	const double x = stick.x.rawValue;
 	const double y = stick.y.rawValue;
 	if (ImPlot::BeginPlot(label, ImVec2(-1.0F, 260.0F), ImPlotFlags_Equal)) {
@@ -573,6 +619,17 @@ void DrawStickPlot(const char* label, const qss::LiveStickState& stick) {
 		const double circleX[] = {-1.0, -0.7071, 0.0, 0.7071, 1.0, 0.7071, 0.0, -0.7071, -1.0};
 		const double circleY[] = {0.0, 0.7071, 1.0, 0.7071, 0.0, -0.7071, -1.0, -0.7071, 0.0};
 		ImPlot::PlotLine("Unit circle", circleX, circleY, 9);
+		if (history != nullptr && history->size() >= 2) {
+			const std::size_t trailCount = std::min<std::size_t>(history->size(), 500);
+			std::vector<double> trailX(trailCount);
+			std::vector<double> trailY(trailCount);
+			const std::size_t first = history->size() - trailCount;
+			for (std::size_t index = 0; index < trailCount; ++index) {
+				trailX[index] = (*history)[first + index].raw.x;
+				trailY[index] = (*history)[first + index].raw.y;
+			}
+			ImPlot::PlotLine("Raw trail", trailX.data(), trailY.data(), static_cast<int>(trailCount));
+		}
 		if (stick.x.available && stick.y.available) {
 			ImPlot::PlotScatter("Current", &x, &y, 1);
 		}
@@ -584,6 +641,73 @@ void DrawStickPlot(const char* label, const qss::LiveStickState& stick) {
 	if (!stick.x.available || !stick.y.available) {
 		ImGui::TextDisabled("Waiting for both stick axes.");
 	}
+}
+
+void DrawHistoryStatistics(
+	const char* plotId,
+	const std::deque<qss::StickPointSample>& history
+) {
+	if (history.empty()) {
+		ImGui::TextDisabled("No time-series samples yet.");
+		return;
+	}
+
+	const std::int64_t latestTicks = history.back().timestampTicks;
+	const double frequency = static_cast<double>(qss::MonotonicClock::Frequency());
+	std::vector<double> times(history.size());
+	std::vector<double> rawX(history.size());
+	std::vector<double> rawY(history.size());
+	std::vector<double> outputX(history.size());
+	std::vector<double> outputY(history.size());
+	std::vector<qss::StickPointSample> statisticsInput;
+	statisticsInput.reserve(history.size());
+
+	for (std::size_t index = 0; index < history.size(); ++index) {
+		const qss::StickPointSample& sample = history[index];
+		times[index] = static_cast<double>(sample.timestampTicks - latestTicks) / frequency;
+		rawX[index] = sample.raw.x;
+		rawY[index] = sample.raw.y;
+		outputX[index] = sample.output.x;
+		outputY[index] = sample.output.y;
+		statisticsInput.push_back(sample);
+	}
+
+	if (ImPlot::BeginPlot(plotId, ImVec2(-1.0F, 220.0F))) {
+		ImPlot::SetupAxes("Seconds", "Value");
+		ImPlot::SetupAxisLimits(ImAxis_X1, -10.0, 0.0, ImGuiCond_Always);
+		ImPlot::SetupAxisLimits(ImAxis_Y1, -1.1, 1.1, ImGuiCond_Always);
+		ImPlot::PlotLine("Raw X", times.data(), rawX.data(), static_cast<int>(times.size()));
+		ImPlot::PlotLine("Raw Y", times.data(), rawY.data(), static_cast<int>(times.size()));
+		ImPlot::PlotLine("Output X", times.data(), outputX.data(), static_cast<int>(times.size()));
+		ImPlot::PlotLine("Output Y", times.data(), outputY.data(), static_cast<int>(times.size()));
+		ImPlot::EndPlot();
+	}
+
+	const qss::StickStatistics statistics = qss::CalculateStickStatistics(
+		statisticsInput,
+		qss::MonotonicClock::Frequency()
+	);
+	if (!statistics.valid) {
+		return;
+	}
+	ImGui::Text(
+		"Samples %zu | %.1f Hz | Mean (%+.4f, %+.4f) | StdDev (%.4f, %.4f)",
+		statistics.sampleCount,
+		statistics.updateHz,
+		statistics.rawMean.x,
+		statistics.rawMean.y,
+		statistics.rawStandardDeviation.x,
+		statistics.rawStandardDeviation.y
+	);
+	ImGui::Text(
+		"Min (%+.4f, %+.4f) | Max (%+.4f, %+.4f) | Mean radius %.4f | Max radius %.4f",
+		statistics.rawMinimum.x,
+		statistics.rawMinimum.y,
+		statistics.rawMaximum.x,
+		statistics.rawMaximum.y,
+		statistics.rawMeanRadius,
+		statistics.rawMaximumRadius
+	);
 }
 
 void DrawPipeline(const GuiState& state) {
@@ -652,7 +776,7 @@ void DrawLiveView(GuiState& state) {
 	const float columnWidth = std::max(320.0F, (availableWidth - 12.0F) * 0.5F);
 	ImGui::BeginChild("LeftStick", ImVec2(columnWidth, 0.0F), ImGuiChildFlags_Borders);
 	ImGui::SeparatorText("Left Stick");
-	DrawStickPlot("##LeftXY", left);
+	DrawStickPlot("##LeftXY", left, &state.leftHistory);
 	ImGui::PushID("LeftCorrection");
 	if (state.correctionLoaded && DrawCorrectionControls(state.leftCorrection)) {
 		state.MarkCorrectionDirty();
@@ -662,13 +786,24 @@ void DrawLiveView(GuiState& state) {
 	ImGui::SameLine();
 	ImGui::BeginChild("RightStick", ImVec2(0.0F, 0.0F), ImGuiChildFlags_Borders);
 	ImGui::SeparatorText("Right Stick");
-	DrawStickPlot("##RightXY", right);
+	DrawStickPlot("##RightXY", right, &state.rightHistory);
 	ImGui::PushID("RightCorrection");
 	if (state.correctionLoaded && DrawCorrectionControls(state.rightCorrection)) {
 		state.MarkCorrectionDirty();
 	}
 	ImGui::PopID();
 	ImGui::EndChild();
+
+	ImGui::Spacing();
+	ImGui::SeparatorText("Time / Statistics");
+	ImGui::PushID("LeftHistory");
+	ImGui::TextUnformatted("Left Stick");
+	DrawHistoryStatistics("##LeftTime", state.leftHistory);
+	ImGui::PopID();
+	ImGui::PushID("RightHistory");
+	ImGui::TextUnformatted("Right Stick");
+	DrawHistoryStatistics("##RightTime", state.rightHistory);
+	ImGui::PopID();
 }
 
 void DrawCalibrationHand(
