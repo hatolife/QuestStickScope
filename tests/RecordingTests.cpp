@@ -51,6 +51,17 @@ TEST(RecordingTests, RoundTripsComponentsAndSamples) {
 	sample.flags = qss::kSampleFlagCorrectionApplied;
 	source.samples.push_back(sample);
 
+	qss::WindowsInputSample windowsSample;
+	windowsSample.timestampTicks = 2000;
+	windowsSample.source = qss::WindowsInputSource::LowLevelMouse;
+	windowsSample.kind = qss::WindowsInputKind::Wheel;
+	windowsSample.x = 100;
+	windowsSample.y = 200;
+	windowsSample.wheelDelta = -120;
+	windowsSample.flags = 1;
+	windowsSample.extraInfo = 1234;
+	source.windowsInputSamples.push_back(windowsSample);
+
 	std::string error;
 	ASSERT_TRUE(qss::SaveRecording(path, source, &error)) << error;
 
@@ -76,6 +87,11 @@ TEST(RecordingTests, RoundTripsComponentsAndSamples) {
 	EXPECT_FLOAT_EQ(loaded.samples[0].rawValue, 0.25F);
 	EXPECT_FLOAT_EQ(loaded.samples[0].outputValue, 0.20F);
 	EXPECT_EQ(loaded.samples[0].flags, qss::kSampleFlagCorrectionApplied);
+	ASSERT_EQ(loaded.windowsInputSamples.size(), 1U);
+	EXPECT_EQ(loaded.windowsInputSamples[0].source, qss::WindowsInputSource::LowLevelMouse);
+	EXPECT_EQ(loaded.windowsInputSamples[0].kind, qss::WindowsInputKind::Wheel);
+	EXPECT_EQ(loaded.windowsInputSamples[0].wheelDelta, -120);
+	EXPECT_EQ(loaded.windowsInputSamples[0].extraInfo, 1234U);
 
 	std::error_code ec;
 	std::filesystem::remove(path, ec);

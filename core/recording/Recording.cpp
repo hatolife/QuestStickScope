@@ -11,9 +11,10 @@ namespace qss {
 namespace {
 
 constexpr std::array<char, 8> kMagic = {'Q', 'S', 'S', 'R', 'E', 'C', '1', '\0'};
-constexpr std::uint32_t kFormatVersion = 3;
+constexpr std::uint32_t kFormatVersion = 4;
 constexpr std::uint32_t kMaxComponentCount = 4096;
 constexpr std::uint64_t kMaxSampleCount = 100000000ULL;
+constexpr std::uint64_t kMaxWindowsInputSampleCount = 100000000ULL;
 
 template <typename T>
 bool WriteValue(std::ostream& stream, const T& value) {
@@ -118,6 +119,51 @@ bool ReadHandCorrection(std::istream& stream, SharedHandCorrection& correction) 
 	return true;
 }
 
+bool WriteWindowsInputSample(
+	std::ostream& stream,
+	const WindowsInputSample& sample
+) {
+	return WriteValue(stream, sample.timestampTicks) &&
+		WriteValue(stream, static_cast<std::uint8_t>(sample.source)) &&
+		WriteValue(stream, static_cast<std::uint8_t>(sample.kind)) &&
+		WriteValue(stream, sample.x) &&
+		WriteValue(stream, sample.y) &&
+		WriteValue(stream, sample.deltaX) &&
+		WriteValue(stream, sample.deltaY) &&
+		WriteValue(stream, sample.wheelDelta) &&
+		WriteValue(stream, sample.flags) &&
+		WriteValue(stream, sample.device) &&
+		WriteValue(stream, sample.extraInfo);
+}
+
+bool ReadWindowsInputSample(
+	std::istream& stream,
+	WindowsInputSample& sample
+) {
+	std::uint8_t source = 0;
+	std::uint8_t kind = 0;
+	if (!ReadValue(stream, sample.timestampTicks) ||
+		!ReadValue(stream, source) ||
+		!ReadValue(stream, kind) ||
+		!ReadValue(stream, sample.x) ||
+		!ReadValue(stream, sample.y) ||
+		!ReadValue(stream, sample.deltaX) ||
+		!ReadValue(stream, sample.deltaY) ||
+		!ReadValue(stream, sample.wheelDelta) ||
+		!ReadValue(stream, sample.flags) ||
+		!ReadValue(stream, sample.device) ||
+		!ReadValue(stream, sample.extraInfo)) {
+		return false;
+	}
+	if (source > static_cast<std::uint8_t>(WindowsInputSource::RawInputMouse) ||
+		kind > static_cast<std::uint8_t>(WindowsInputKind::Unknown)) {
+		return false;
+	}
+	sample.source = static_cast<WindowsInputSource>(source);
+	sample.kind = static_cast<WindowsInputKind>(kind);
+	return true;
+}
+
 bool WriteSample(std::ostream& stream, const SharedScalarSample& sample) {
 	return WriteValue(stream, sample.timestampTicks) &&
 		WriteValue(stream, sample.sequence) &&
@@ -158,10 +204,13 @@ bool SaveRecording(
 
 	const std::uint32_t componentCount = static_cast<std::uint32_t>(recording.components.size());
 	const std::uint64_t sampleCount = static_cast<std::uint64_t>(recording.samples.size());
+	const std::uint64_t windowsInputSampleCount =
+		static_cast<std::uint64_t>(recording.windowsInputSamples.size());
 	if (!WriteBytes(stream, kMagic.data(), kMagic.size()) ||
 		!WriteValue(stream, kFormatVersion) ||
 		!WriteValue(stream, componentCount) ||
 		!WriteValue(stream, sampleCount) ||
+		!WriteValue(stream, windowsInputSampleCount) ||
 		!WriteValue(stream, recording.qpcFrequency) ||
 		!WriteValue(stream, recording.sessionId) ||
 		!WriteValue(stream, static_cast<std::uint32_t>(recording.probeState)) ||
@@ -184,6 +233,12 @@ bool SaveRecording(
 	for (const SharedScalarSample& sample : recording.samples) {
 		if (!WriteSample(stream, sample)) {
 			SetError(errorMessage, "Failed to write recording samples.");
+			return false;
+		}
+	}
+	for (const WindowsInputSample& sample : recording.windowsInputSamples) {
+		if (!WriteWindowsInputSample(stream, sample)) {
+			SetError(errorMessage, "Failed to write Windows input samples.");
 			return false;
 		}
 	}
@@ -210,6 +265,7 @@ bool LoadRecording(
 	std::uint32_t version = 0;
 	std::uint32_t componentCount = 0;
 	std::uint64_t sampleCount = 0;
+	std::uint64_t windowsInputSampleCount = 0;
 	std::uint32_t probeState = 0;
 	RecordingData loaded;
 
@@ -217,6 +273,7 @@ bool LoadRecording(
 		!ReadValue(stream, version) ||
 		!ReadValue(stream, componentCount) ||
 		!ReadValue(stream, sampleCount) ||
+		!ReadValue(stream, windowsInputSampleCount) ||
 		!ReadValue(stream, loaded.qpcFrequency) ||
 		!ReadValue(stream, loaded.sessionId) ||
 		!ReadValue(stream, probeState) ||
@@ -242,7 +299,9 @@ bool LoadRecording(
 		return false;
 	}
 	loaded.probeState = static_cast<ProbeState>(probeState);
-	if (componentCount > kMaxComponentCount || sampleCount > kMaxSampleCount) {
+	if (componentCount > kMaxComponentCount ||
+		sampleCount > kMaxSampleCount ||
+		windowsInputSampleCount > kMaxWindowsInputSampleCount) {
 		SetError(errorMessage, "Recording counts exceed safety limits.");
 		return false;
 	}
@@ -263,6 +322,16 @@ bool LoadRecording(
 		}
 		if (sample.componentIndex >= componentCount) {
 			SetError(errorMessage, "Recording contains an invalid component index.");
+			return false;
+		}
+	}
+
+	loaded.windowsInputSamples.resize(
+		static_cast<std::size_t>(windowsInputSampleCount)
+	);
+	for (WindowsInputSample& sample : loaded.windowsInputSamples) {
+		if (!ReadWindowsInputSample(stream, sample)) {
+			SetError(errorMessage, "Windows input sample data is truncated or invalid.");
 			return false;
 		}
 	}

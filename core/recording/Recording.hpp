@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/model/WindowsInputSample.hpp"
 #include "ipc/SharedProtocol.hpp"
 
 #include <cstdint>
@@ -21,6 +22,7 @@ struct RecordingData {
 	float initialRightY = 0.0F;
 	std::vector<ScalarComponentSnapshot> components;
 	std::vector<SharedScalarSample> samples;
+	std::vector<WindowsInputSample> windowsInputSamples;
 };
 
 bool SaveRecording(
