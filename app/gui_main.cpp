@@ -8,6 +8,7 @@
 #include "core/recording/Replay.hpp"
 #include "platform/Clock.hpp"
 #include "platform/windows/SteamVRSharedMemory.hpp"
+#include "platform/windows/ProcessIdentity.hpp"
 #include "platform/windows/WindowsMouseObserver.hpp"
 #include "platform/windows/WindowsRawInputObserver.hpp"
 #include "platform/windows/WindowsXInputObserver.hpp"
@@ -144,6 +145,9 @@ struct GuiState {
 	qss::WindowsRawInputObserver windowsRawInputObserver;
 	std::deque<qss::WindowsRawMouseEvent> windowsRawMouseEvents;
 	qss::WindowsXInputObserver windowsXInputObserver;
+	qss::ProcessIdentity steamVrIdentity;
+	qss::ProcessIdentity virtualDesktopIdentity;
+	bool processIdentityScanned = false;
 	qss::SharedHandCorrection leftCorrection{};
 	qss::SharedHandCorrection rightCorrection{};
 	std::uint64_t sessionId = 0;
@@ -192,6 +196,15 @@ struct GuiState {
 				persistenceStatus = "Ignored invalid calibration.json: " + error;
 			}
 		}
+	}
+
+	void RefreshProcessIdentities() {
+		steamVrIdentity = qss::InspectProcessIdentity({L"vrserver.exe"});
+		virtualDesktopIdentity = qss::InspectProcessIdentity({
+			L"VirtualDesktop.Streamer.exe",
+			L"VirtualDesktop.Streamer64.exe"
+		});
+		processIdentityScanned = true;
 	}
 
 	bool SavePersistentCorrection() {
@@ -1209,12 +1222,44 @@ void DrawXInputDiagnostics(GuiState& state) {
 	}
 }
 
+void DrawProcessIdentity(
+	const char* label,
+	const qss::ProcessIdentity& identity
+) {
+	ImGui::SeparatorText(label);
+	if (!identity.running) {
+		ImGui::TextDisabled("Not running");
+		if (!identity.error.empty()) {
+			ImGui::TextDisabled("%s", identity.error.c_str());
+		}
+		return;
+	}
+
+	ImGui::Text("PID: %u", identity.processId);
+	ImGui::TextWrapped("Path: %s", PathToUtf8(identity.executablePath).c_str());
+	ImGui::Text("Version: %s", identity.fileVersion.empty() ? "<unavailable>" : identity.fileVersion.c_str());
+	ImGui::TextWrapped("SHA-256: %s", identity.sha256.empty() ? "<unavailable>" : identity.sha256.c_str());
+	if (!identity.error.empty()) {
+		ImGui::TextDisabled("%s", identity.error.c_str());
+	}
+}
+
+void DrawCompatibilityDiagnostics(GuiState& state) {
+	ImGui::SeparatorText("Compatibility identity");
+	if (!state.processIdentityScanned || ImGui::Button("Refresh process identity")) {
+		state.RefreshProcessIdentities();
+	}
+	DrawProcessIdentity("SteamVR / vrserver.exe", state.steamVrIdentity);
+	DrawProcessIdentity("Virtual Desktop Streamer", state.virtualDesktopIdentity);
+}
+
 void DrawDiagnosticsView(GuiState& state) {
 	if (!state.connected) {
 		ImGui::TextDisabled("SteamVR Probe: Offline");
 		DrawWindowsInputDiagnostics(state);
 		DrawRawInputDiagnostics(state);
 		DrawXInputDiagnostics(state);
+		DrawCompatibilityDiagnostics(state);
 		return;
 	}
 
@@ -1280,6 +1325,7 @@ void DrawDiagnosticsView(GuiState& state) {
 	DrawWindowsInputDiagnostics(state);
 	DrawRawInputDiagnostics(state);
 	DrawXInputDiagnostics(state);
+	DrawCompatibilityDiagnostics(state);
 }
 
 void DrawPlaceholder(const char* title, const char* message) {
