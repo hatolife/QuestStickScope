@@ -78,7 +78,7 @@ if(QSS_BUILD_APP)
 
 		add_executable(QuestStickScope WIN32 app/gui_main.cpp)
 		target_compile_definitions(QuestStickScope PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
-		target_link_libraries(QuestStickScope PRIVATE qss_core qss_platform qss_windows_ipc qss_gui_deps)
+		target_link_libraries(QuestStickScope PRIVATE qss_core qss_platform qss_windows_ipc qss_gui_deps shell32)
 
 		add_executable(QuestStickScopeCli app/main.cpp)
 		target_compile_definitions(QuestStickScopeCli PRIVATE QSS_WINDOWS_IPC=1 WIN32_LEAN_AND_MEAN NOMINMAX)

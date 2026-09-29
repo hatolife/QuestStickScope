@@ -1,10 +1,13 @@
 #ifdef _WIN32
 
 #include "core/live/SteamVRLiveState.hpp"
+#include "core/recording/Recording.hpp"
+#include "core/recording/Replay.hpp"
 #include "platform/Clock.hpp"
 #include "platform/windows/SteamVRSharedMemory.hpp"
 
 #include <d3d11.h>
+#include <ShlObj.h>
 #include <Windows.h>
 
 #include <imgui.h>
@@ -15,7 +18,12 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <climits>
+#include <cwchar>
+#include <filesystem>
 #include <iterator>
+#include <string>
+#include <vector>
 
 namespace {
 
@@ -26,6 +34,62 @@ ID3D11RenderTargetView* g_renderTarget = nullptr;
 UINT g_resizeWidth = 0;
 UINT g_resizeHeight = 0;
 bool g_swapChainOccluded = false;
+
+std::filesystem::path GetRecordingDirectory() {
+	PWSTR localAppData = nullptr;
+	if (FAILED(::SHGetKnownFolderPath(FOLDERID_LocalAppData, KF_FLAG_DEFAULT, nullptr, &localAppData))) {
+		return {};
+	}
+	const std::filesystem::path directory =
+		std::filesystem::path(localAppData) / L"QuestStickScope" / L"recordings";
+	::CoTaskMemFree(localAppData);
+	return directory;
+}
+
+std::filesystem::path MakeRecordingFilePath() {
+	const std::filesystem::path directory = GetRecordingDirectory();
+	if (directory.empty()) {
+		return {};
+	}
+	std::error_code error;
+	std::filesystem::create_directories(directory, error);
+	if (error) {
+		return {};
+	}
+
+	SYSTEMTIME time{};
+	::GetLocalTime(&time);
+	wchar_t name[96]{};
+	swprintf_s(
+		name,
+		L"steamvr-%04u%02u%02u-%02u%02u%02u.qssrec",
+		time.wYear,
+		time.wMonth,
+		time.wDay,
+		time.wHour,
+		time.wMinute,
+		time.wSecond
+	);
+	return directory / name;
+}
+
+std::string PathToUtf8(const std::filesystem::path& path) {
+	const std::u8string value = path.u8string();
+	return std::string(reinterpret_cast<const char*>(value.data()), value.size());
+}
+
+qss::CorrectionSettings ToCorrectionSettings(const qss::SharedHandCorrection& shared) {
+	qss::CorrectionSettings settings;
+	settings.enabled = shared.enabled != 0;
+	settings.centerOffsetEnabled = shared.centerOffsetEnabled != 0;
+	settings.innerDeadzoneEnabled = shared.innerDeadzoneEnabled != 0;
+	settings.outerNormalizationEnabled = shared.outerNormalizationEnabled != 0;
+	settings.clampEnabled = shared.clampEnabled != 0;
+	settings.center = {shared.centerX, shared.centerY};
+	settings.innerDeadzone = shared.innerDeadzone;
+	settings.outerRadius = shared.outerRadius;
+	return settings;
+}
 
 struct GuiState {
 	qss::SteamVRSharedMemoryReader reader;
@@ -39,6 +103,127 @@ struct GuiState {
 	bool connected = false;
 	bool correctionLoaded = false;
 	bool correctionDirty = false;
+	qss::RecordingData activeRecording;
+	bool recordingActive = false;
+	std::string recordingStatus;
+	std::vector<std::filesystem::path> recordingFiles;
+	int selectedRecordingIndex = -1;
+	qss::RecordingData replayRecording;
+	qss::SteamVRLiveState replayLive;
+	std::size_t replayCursor = 0;
+	bool replayLoaded = false;
+	std::string replayStatus;
+
+	void CaptureComponents(qss::RecordingData& recording) {
+		const std::uint32_t count = reader.GetComponentCount();
+		recording.components.resize(count);
+		for (std::uint32_t index = 0; index < count; ++index) {
+			qss::ScalarComponentSnapshot component;
+			if (reader.ReadComponent(index, component)) {
+				recording.components[index] = component;
+			}
+		}
+	}
+
+	void RefreshRecordingFiles() {
+		recordingFiles.clear();
+		const std::filesystem::path directory = GetRecordingDirectory();
+		std::error_code error;
+		if (directory.empty() || !std::filesystem::exists(directory, error)) {
+			selectedRecordingIndex = -1;
+			return;
+		}
+		for (const auto& entry : std::filesystem::directory_iterator(directory, error)) {
+			if (error) {
+				break;
+			}
+			if (entry.is_regular_file() && entry.path().extension() == L".qssrec") {
+				recordingFiles.push_back(entry.path());
+			}
+		}
+		std::sort(recordingFiles.begin(), recordingFiles.end(), std::greater<>());
+		if (selectedRecordingIndex >= static_cast<int>(recordingFiles.size())) {
+			selectedRecordingIndex = -1;
+		}
+	}
+
+	bool StartRecording() {
+		if (!connected || recordingActive) {
+			return false;
+		}
+		activeRecording = {};
+		activeRecording.qpcFrequency = static_cast<std::uint64_t>(qss::MonotonicClock::Frequency());
+		activeRecording.sessionId = sessionId;
+		activeRecording.probeState = reader.GetProbeState();
+		activeRecording.leftCorrection = leftCorrection;
+		activeRecording.rightCorrection = rightCorrection;
+		CaptureComponents(activeRecording);
+		recordingActive = true;
+		recordingStatus = "Recording...";
+		return true;
+	}
+
+	bool StopRecording() {
+		if (!recordingActive) {
+			return false;
+		}
+		recordingActive = false;
+		const std::filesystem::path path = MakeRecordingFilePath();
+		if (path.empty()) {
+			recordingStatus = "Failed to resolve recording directory.";
+			return false;
+		}
+
+		std::string error;
+		if (!qss::SaveRecording(path, activeRecording, &error)) {
+			recordingStatus = "Save failed: " + error;
+			return false;
+		}
+		recordingStatus = "Saved: " + PathToUtf8(path.filename());
+		RefreshRecordingFiles();
+		return true;
+	}
+
+	void RebuildReplay(std::size_t cursor) {
+		replayLive.Reset();
+		for (std::size_t index = 0; index < replayRecording.components.size(); ++index) {
+			replayLive.ConfigureComponent(
+				static_cast<std::uint32_t>(index),
+				replayRecording.components[index]
+			);
+		}
+		replayCursor = std::min(cursor, replayRecording.samples.size());
+		for (std::size_t index = 0; index < replayCursor; ++index) {
+			replayLive.ConsumeSample(replayRecording.samples[index]);
+		}
+	}
+
+	bool LoadReplay(const std::filesystem::path& path) {
+		qss::RecordingData loaded;
+		std::string error;
+		if (!qss::LoadRecording(path, loaded, &error)) {
+			replayLoaded = false;
+			replayStatus = "Load failed: " + error;
+			return false;
+		}
+		replayRecording = std::move(loaded);
+		replayLoaded = true;
+		replayStatus = "Loaded: " + PathToUtf8(path.filename());
+		RebuildReplay(replayRecording.samples.size());
+		return true;
+	}
+
+	void ApplyCurrentCorrectionToReplay() {
+		if (!replayLoaded || !correctionLoaded) {
+			return;
+		}
+		qss::ReplayCorrectionSettings settings;
+		settings.left = ToCorrectionSettings(leftCorrection);
+		settings.right = ToCorrectionSettings(rightCorrection);
+		qss::RecalculateRecordingOutputs(replayRecording, settings);
+		RebuildReplay(replayCursor);
+		replayStatus = "Replay outputs recalculated with current correction.";
+	}
 
 	void ResetSession() {
 		live.Reset();
@@ -72,6 +257,9 @@ struct GuiState {
 
 		const std::uint64_t currentSessionId = reader.GetSessionId();
 		if (currentSessionId != sessionId) {
+			if (recordingActive) {
+				StopRecording();
+			}
 			sessionId = currentSessionId;
 			ResetSession();
 		}
@@ -99,6 +287,9 @@ struct GuiState {
 			live.ConfigureComponent(configuredComponentCount, component);
 			++configuredComponentCount;
 		}
+		if (recordingActive && activeRecording.components.size() != componentCount) {
+			CaptureComponents(activeRecording);
+		}
 
 		std::array<qss::SharedScalarSample, 256> samples{};
 		for (;;) {
@@ -108,6 +299,9 @@ struct GuiState {
 			}
 			for (std::size_t index = 0; index < count; ++index) {
 				live.ConsumeSample(samples[index]);
+				if (recordingActive && samples[index].componentIndex < activeRecording.components.size()) {
+					activeRecording.samples.push_back(samples[index]);
+				}
 			}
 		}
 	}
@@ -259,6 +453,94 @@ void DrawLiveView(GuiState& state) {
 	ImGui::EndChild();
 }
 
+void DrawRecordingView(GuiState& state) {
+	ImGui::SeparatorText("Record");
+	if (!state.connected) {
+		ImGui::TextDisabled("SteamVR Probe is offline.");
+	} else if (state.recordingActive) {
+		if (ImGui::Button("Stop recording")) {
+			state.StopRecording();
+		}
+		ImGui::SameLine();
+		ImGui::Text("Samples: %zu", state.activeRecording.samples.size());
+	} else {
+		if (ImGui::Button("Start recording")) {
+			state.StartRecording();
+		}
+	}
+	if (!state.recordingStatus.empty()) {
+		ImGui::TextWrapped("%s", state.recordingStatus.c_str());
+	}
+
+	ImGui::Spacing();
+	ImGui::SeparatorText("Saved recordings");
+	if (ImGui::Button("Refresh")) {
+		state.RefreshRecordingFiles();
+	}
+	if (state.recordingFiles.empty()) {
+		state.RefreshRecordingFiles();
+	}
+	ImGui::BeginChild("RecordingFiles", ImVec2(0.0F, 150.0F), ImGuiChildFlags_Borders);
+	for (int index = 0; index < static_cast<int>(state.recordingFiles.size()); ++index) {
+		const std::string label = PathToUtf8(state.recordingFiles[index].filename());
+		if (ImGui::Selectable(label.c_str(), state.selectedRecordingIndex == index)) {
+			state.selectedRecordingIndex = index;
+		}
+	}
+	ImGui::EndChild();
+
+	if (state.selectedRecordingIndex >= 0 &&
+		state.selectedRecordingIndex < static_cast<int>(state.recordingFiles.size())) {
+		if (ImGui::Button("Load selected recording")) {
+			state.LoadReplay(state.recordingFiles[state.selectedRecordingIndex]);
+		}
+	}
+	if (!state.replayStatus.empty()) {
+		ImGui::TextWrapped("%s", state.replayStatus.c_str());
+	}
+
+	if (!state.replayLoaded) {
+		return;
+	}
+
+	ImGui::Spacing();
+	ImGui::SeparatorText("Replay");
+	ImGui::Text(
+		"Components: %zu   Samples: %zu   Session: %llu",
+		state.replayRecording.components.size(),
+		state.replayRecording.samples.size(),
+		static_cast<unsigned long long>(state.replayRecording.sessionId)
+	);
+
+	const std::size_t maxCursorSize = state.replayRecording.samples.size();
+	int cursor = static_cast<int>(std::min<std::size_t>(
+		state.replayCursor,
+		static_cast<std::size_t>(INT_MAX)
+	));
+	const int maxCursor = static_cast<int>(std::min<std::size_t>(
+		maxCursorSize,
+		static_cast<std::size_t>(INT_MAX)
+	));
+	if (ImGui::SliderInt("Sample position", &cursor, 0, maxCursor)) {
+		state.RebuildReplay(static_cast<std::size_t>(cursor));
+	}
+	if (state.correctionLoaded && ImGui::Button("Reapply current correction")) {
+		state.ApplyCurrentCorrectionToReplay();
+	}
+
+	const float availableWidth = ImGui::GetContentRegionAvail().x;
+	const float columnWidth = std::max(320.0F, (availableWidth - 12.0F) * 0.5F);
+	ImGui::BeginChild("ReplayLeft", ImVec2(columnWidth, 330.0F), ImGuiChildFlags_Borders);
+	ImGui::SeparatorText("Replay Left");
+	DrawStickPlot("##ReplayLeftXY", state.replayLive.GetLeft());
+	ImGui::EndChild();
+	ImGui::SameLine();
+	ImGui::BeginChild("ReplayRight", ImVec2(0.0F, 330.0F), ImGuiChildFlags_Borders);
+	ImGui::SeparatorText("Replay Right");
+	DrawStickPlot("##ReplayRightXY", state.replayLive.GetRight());
+	ImGui::EndChild();
+}
+
 void DrawDiagnosticsView(GuiState& state) {
 	if (!state.connected) {
 		ImGui::TextDisabled("SteamVR Probe: Offline");
@@ -334,7 +616,7 @@ void DrawMainWindow(GuiState& state) {
 			ImGui::EndTabItem();
 		}
 		if (ImGui::BeginTabItem("Recording")) {
-			DrawPlaceholder("Recording", "Record / Replay uses the same timestamped sample stream and will be added after the live pipeline is stable.");
+			DrawRecordingView(state);
 			ImGui::EndTabItem();
 		}
 		if (ImGui::BeginTabItem("Diagnostics")) {
@@ -556,6 +838,9 @@ int RunGui(HINSTANCE instance) {
 		g_swapChainOccluded = (presentResult == DXGI_STATUS_OCCLUDED);
 	}
 
+	if (state.recordingActive) {
+		state.StopRecording();
+	}
 	ImGui_ImplDX11_Shutdown();
 	ImGui_ImplWin32_Shutdown();
 	ImPlot::DestroyContext();
