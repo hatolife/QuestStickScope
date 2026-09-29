@@ -1,6 +1,7 @@
 #ifdef _WIN32
 
 #include "core/analysis/StickStatistics.hpp"
+#include "core/analysis/WindowsInputAnalysis.hpp"
 #include "core/calibration/Calibration.hpp"
 #include "core/config/CorrectionStore.hpp"
 #include "core/live/SteamVRLiveState.hpp"
@@ -1074,6 +1075,24 @@ void DrawReplayWindowsInput(GuiState& state) {
 	}
 
 	ImGui::SeparatorText("Replay Windows W0");
+	const qss::WindowsInputStatistics statistics = qss::AnalyzeWindowsInput(
+		state.replayRecording.windowsInputSamples,
+		static_cast<std::int64_t>(state.replayRecording.qpcFrequency)
+	);
+	ImGui::Text(
+		"Duration %.3f s | LL %zu (injected %zu, wheel %zu) | Raw %zu (wheel %zu)",
+		statistics.durationSeconds,
+		statistics.lowLevelMouse.total,
+		statistics.lowLevelInjected,
+		statistics.lowLevelMouse.wheel + statistics.lowLevelMouse.horizontalWheel,
+		statistics.rawInputMouse.total,
+		statistics.rawInputMouse.wheel + statistics.rawInputMouse.horizontalWheel
+	);
+	ImGui::Text(
+		"Wheel delta sum: LL %lld / Raw %lld",
+		static_cast<long long>(statistics.lowLevelMouse.wheelDeltaSum),
+		static_cast<long long>(statistics.rawInputMouse.wheelDeltaSum)
+	);
 	int cursor = static_cast<int>(std::min<std::size_t>(
 		state.windowsReplayCursor,
 		static_cast<std::size_t>(INT_MAX)

@@ -20,6 +20,7 @@ add_executable(qss_core_tests
 	ReplayTests.cpp
 	RingBufferTests.cpp
 	StickStatisticsTests.cpp
+	WindowsInputAnalysisTests.cpp
 )
 
 target_link_libraries(qss_core_tests PRIVATE qss_core GTest::gtest_main)

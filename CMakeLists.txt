@@ -22,6 +22,7 @@ FetchContent_MakeAvailable(nlohmann_json)
 
 add_library(qss_core
 	core/analysis/StickStatistics.cpp
+	core/analysis/WindowsInputAnalysis.cpp
 	core/calibration/Calibration.cpp
 	core/config/CorrectionStore.cpp
 	core/correction/Correction.cpp
