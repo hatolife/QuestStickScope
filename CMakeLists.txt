@@ -46,6 +46,7 @@ if(WIN32)
 	add_library(qss_windows_input
 		platform/windows/WindowsMouseObserver.cpp
 		platform/windows/WindowsRawInputObserver.cpp
+		platform/windows/WindowsXInputObserver.cpp
 	)
 	target_include_directories(qss_windows_ipc PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 	target_compile_definitions(qss_windows_ipc PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
@@ -53,7 +54,7 @@ if(WIN32)
 
 	target_include_directories(qss_windows_input PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 	target_compile_definitions(qss_windows_input PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
-	target_link_libraries(qss_windows_input PUBLIC qss_platform)
+	target_link_libraries(qss_windows_input PUBLIC qss_platform Xinput9_1_0)
 endif()
 
 if(QSS_BUILD_APP)
