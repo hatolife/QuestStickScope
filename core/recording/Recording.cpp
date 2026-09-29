@@ -5,6 +5,7 @@
 #include <fstream>
 #include <limits>
 #include <type_traits>
+#include <utility>
 
 namespace qss {
 namespace {
