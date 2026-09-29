@@ -223,6 +223,7 @@ struct GuiState {
 	qss::RecordingData replayRecording;
 	qss::SteamVRLiveState replayLive;
 	std::size_t replayCursor = 0;
+	std::size_t windowsReplayCursor = 0;
 	bool replayLoaded = false;
 	std::string replayStatus;
 	CalibrationMode calibrationMode = CalibrationMode::None;
@@ -542,6 +543,7 @@ struct GuiState {
 		replayLoaded = true;
 		replayStatus = "Loaded: " + PathToUtf8(path.filename());
 		RebuildReplay(replayRecording.samples.size());
+		windowsReplayCursor = replayRecording.windowsInputSamples.size();
 		return true;
 	}
 
@@ -1040,6 +1042,115 @@ void DrawCalibrationView(GuiState& state) {
 	}
 }
 
+const char* WindowsInputSourceName(qss::WindowsInputSource source) {
+	switch (source) {
+	case qss::WindowsInputSource::LowLevelMouse:
+		return "LL Hook";
+	case qss::WindowsInputSource::RawInputMouse:
+		return "Raw Input";
+	}
+	return "Unknown";
+}
+
+const char* WindowsInputKindName(qss::WindowsInputKind kind) {
+	switch (kind) {
+	case qss::WindowsInputKind::Move:
+		return "Move";
+	case qss::WindowsInputKind::Wheel:
+		return "Wheel";
+	case qss::WindowsInputKind::HorizontalWheel:
+		return "HWheel";
+	case qss::WindowsInputKind::Button:
+		return "Button";
+	case qss::WindowsInputKind::Unknown:
+		return "Unknown";
+	}
+	return "Unknown";
+}
+
+void DrawReplayWindowsInput(GuiState& state) {
+	if (state.replayRecording.windowsInputSamples.empty()) {
+		return;
+	}
+
+	ImGui::SeparatorText("Replay Windows W0");
+	int cursor = static_cast<int>(std::min<std::size_t>(
+		state.windowsReplayCursor,
+		static_cast<std::size_t>(INT_MAX)
+	));
+	const int maxCursor = static_cast<int>(std::min<std::size_t>(
+		state.replayRecording.windowsInputSamples.size(),
+		static_cast<std::size_t>(INT_MAX)
+	));
+	if (ImGui::SliderInt("Windows sample position", &cursor, 0, maxCursor)) {
+		state.windowsReplayCursor = static_cast<std::size_t>(cursor);
+	}
+
+	const std::size_t center = std::min(
+		state.windowsReplayCursor,
+		state.replayRecording.windowsInputSamples.size()
+	);
+	const std::size_t first = center > 50 ? center - 50 : 0;
+	const std::size_t last = std::min(
+		state.replayRecording.windowsInputSamples.size(),
+		center + 50
+	);
+	const std::int64_t originTicks =
+		state.replayRecording.windowsInputSamples.front().timestampTicks;
+	const double frequency = state.replayRecording.qpcFrequency > 0
+		? static_cast<double>(state.replayRecording.qpcFrequency)
+		: 1.0;
+
+	if (ImGui::BeginTable(
+		"ReplayWindowsEvents",
+		10,
+		ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY,
+		ImVec2(0.0F, 280.0F)
+	)) {
+		ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, 55.0F);
+		ImGui::TableSetupColumn("Time", ImGuiTableColumnFlags_WidthFixed, 85.0F);
+		ImGui::TableSetupColumn("Source", ImGuiTableColumnFlags_WidthFixed, 80.0F);
+		ImGui::TableSetupColumn("Kind", ImGuiTableColumnFlags_WidthFixed, 75.0F);
+		ImGui::TableSetupColumn("X", ImGuiTableColumnFlags_WidthFixed, 65.0F);
+		ImGui::TableSetupColumn("Y", ImGuiTableColumnFlags_WidthFixed, 65.0F);
+		ImGui::TableSetupColumn("dX", ImGuiTableColumnFlags_WidthFixed, 65.0F);
+		ImGui::TableSetupColumn("dY", ImGuiTableColumnFlags_WidthFixed, 65.0F);
+		ImGui::TableSetupColumn("Wheel", ImGuiTableColumnFlags_WidthFixed, 70.0F);
+		ImGui::TableSetupColumn("Flags", ImGuiTableColumnFlags_WidthFixed, 90.0F);
+		ImGui::TableHeadersRow();
+
+		for (std::size_t index = first; index < last; ++index) {
+			const qss::WindowsInputSample& sample =
+				state.replayRecording.windowsInputSamples[index];
+			ImGui::TableNextRow();
+			ImGui::TableSetColumnIndex(0);
+			ImGui::Text("%zu", index);
+			ImGui::TableSetColumnIndex(1);
+			ImGui::Text(
+				"%.4f",
+				static_cast<double>(sample.timestampTicks - originTicks) / frequency
+			);
+			ImGui::TableSetColumnIndex(2);
+			ImGui::TextUnformatted(WindowsInputSourceName(sample.source));
+			ImGui::TableSetColumnIndex(3);
+			ImGui::TextUnformatted(WindowsInputKindName(sample.kind));
+			ImGui::TableSetColumnIndex(4);
+			ImGui::Text("%d", sample.x);
+			ImGui::TableSetColumnIndex(5);
+			ImGui::Text("%d", sample.y);
+			ImGui::TableSetColumnIndex(6);
+			ImGui::Text("%d", sample.deltaX);
+			ImGui::TableSetColumnIndex(7);
+			ImGui::Text("%d", sample.deltaY);
+			ImGui::TableSetColumnIndex(8);
+			ImGui::Text("%d", sample.wheelDelta);
+			ImGui::TableSetColumnIndex(9);
+			ImGui::Text("0x%08X", sample.flags);
+		}
+		ImGui::EndTable();
+	}
+}
+
 void DrawRecordingView(GuiState& state) {
 	ImGui::SeparatorText("Record");
 	if (state.recordingActive) {
@@ -1134,6 +1245,8 @@ void DrawRecordingView(GuiState& state) {
 	ImGui::SeparatorText("Replay Right");
 	DrawStickPlot("##ReplayRightXY", state.replayLive.GetRight());
 	ImGui::EndChild();
+
+	DrawReplayWindowsInput(state);
 }
 
 const char* MouseEventTypeName(qss::WindowsMouseEventType type) {
