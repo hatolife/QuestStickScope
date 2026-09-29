@@ -1,5 +1,6 @@
 #ifdef _WIN32
 
+#include "core/calibration/Calibration.hpp"
 #include "core/live/SteamVRLiveState.hpp"
 #include "core/recording/Recording.hpp"
 #include "core/recording/Replay.hpp"
@@ -80,6 +81,20 @@ std::string PathToUtf8(const std::filesystem::path& path) {
 	return std::string(reinterpret_cast<const char*>(value.data()), value.size());
 }
 
+qss::SharedHandCorrection ToSharedCorrection(const qss::CorrectionSettings& settings) {
+	qss::SharedHandCorrection shared;
+	shared.enabled = settings.enabled ? 1U : 0U;
+	shared.centerOffsetEnabled = settings.centerOffsetEnabled ? 1U : 0U;
+	shared.innerDeadzoneEnabled = settings.innerDeadzoneEnabled ? 1U : 0U;
+	shared.outerNormalizationEnabled = settings.outerNormalizationEnabled ? 1U : 0U;
+	shared.clampEnabled = settings.clampEnabled ? 1U : 0U;
+	shared.centerX = settings.center.x;
+	shared.centerY = settings.center.y;
+	shared.innerDeadzone = settings.innerDeadzone;
+	shared.outerRadius = settings.outerRadius;
+	return shared;
+}
+
 qss::CorrectionSettings ToCorrectionSettings(const qss::SharedHandCorrection& shared) {
 	qss::CorrectionSettings settings;
 	settings.enabled = shared.enabled != 0;
@@ -93,10 +108,17 @@ qss::CorrectionSettings ToCorrectionSettings(const qss::SharedHandCorrection& sh
 	return settings;
 }
 
+enum class CalibrationMode {
+	None,
+	Center,
+	Outer,
+};
+
 struct GuiState {
 	qss::SteamVRSharedMemoryReader reader;
 	qss::SteamVRSharedMemoryController controller;
 	qss::SteamVRLiveState live;
+	std::vector<qss::ScalarComponentSnapshot> components;
 	qss::SharedHandCorrection leftCorrection{};
 	qss::SharedHandCorrection rightCorrection{};
 	std::uint64_t sessionId = 0;
@@ -115,6 +137,120 @@ struct GuiState {
 	std::size_t replayCursor = 0;
 	bool replayLoaded = false;
 	std::string replayStatus;
+	CalibrationMode calibrationMode = CalibrationMode::None;
+	qss::ControllerHand calibrationHand = qss::ControllerHand::Unknown;
+	std::int64_t calibrationStartTicks = 0;
+	std::vector<qss::Vec2> calibrationSamples;
+	qss::CenterCalibrationResult leftCenterResult;
+	qss::CenterCalibrationResult rightCenterResult;
+	qss::OuterCalibrationResult leftOuterResult;
+	qss::OuterCalibrationResult rightOuterResult;
+	std::string calibrationStatus;
+
+	void StartCenterCalibration(qss::ControllerHand hand) {
+		calibrationMode = CalibrationMode::Center;
+		calibrationHand = hand;
+		calibrationStartTicks = qss::MonotonicClock::NowTicks();
+		calibrationSamples.clear();
+		calibrationStatus = "Keep the stick released for 3 seconds.";
+	}
+
+	void StartOuterCalibration(qss::ControllerHand hand) {
+		calibrationMode = CalibrationMode::Outer;
+		calibrationHand = hand;
+		calibrationStartTicks = qss::MonotonicClock::NowTicks();
+		calibrationSamples.clear();
+		calibrationStatus = "Hold the stick against the outer edge and rotate it several times.";
+	}
+
+	void FinalizeCenterCalibration() {
+		const qss::CenterCalibrationResult result = qss::CalibrateCenter(calibrationSamples);
+		if (calibrationHand == qss::ControllerHand::Left) {
+			leftCenterResult = result;
+		} else if (calibrationHand == qss::ControllerHand::Right) {
+			rightCenterResult = result;
+		}
+		calibrationMode = CalibrationMode::None;
+		calibrationStatus = result.valid ? "Center measurement completed." : "Center measurement failed: not enough samples.";
+	}
+
+	void FinalizeOuterCalibration() {
+		qss::Vec2 center{};
+		if (calibrationHand == qss::ControllerHand::Left) {
+			center = leftCenterResult.valid
+				? leftCenterResult.center
+				: qss::Vec2{leftCorrection.centerX, leftCorrection.centerY};
+			leftOuterResult = qss::CalibrateOuterRange(calibrationSamples, center);
+			calibrationStatus = leftOuterResult.valid
+				? "Outer-range measurement completed."
+				: "Outer-range coverage is insufficient.";
+		} else if (calibrationHand == qss::ControllerHand::Right) {
+			center = rightCenterResult.valid
+				? rightCenterResult.center
+				: qss::Vec2{rightCorrection.centerX, rightCorrection.centerY};
+			rightOuterResult = qss::CalibrateOuterRange(calibrationSamples, center);
+			calibrationStatus = rightOuterResult.valid
+				? "Outer-range measurement completed."
+				: "Outer-range coverage is insufficient.";
+		}
+		calibrationMode = CalibrationMode::None;
+	}
+
+	void CaptureCalibrationSample(const qss::SharedScalarSample& sample) {
+		if (calibrationMode == CalibrationMode::None ||
+			sample.componentIndex >= components.size()) {
+			return;
+		}
+		const qss::ScalarComponentSnapshot& component = components[sample.componentIndex];
+		if (component.hand != calibrationHand ||
+			(component.semantic != qss::ScalarSemantic::JoystickX &&
+			 component.semantic != qss::ScalarSemantic::JoystickY)) {
+			return;
+		}
+
+		const qss::LiveStickState& stick = calibrationHand == qss::ControllerHand::Left
+			? live.GetLeft()
+			: live.GetRight();
+		if (!stick.x.available || !stick.y.available) {
+			return;
+		}
+		if (calibrationSamples.size() < 500000) {
+			calibrationSamples.push_back({stick.x.rawValue, stick.y.rawValue});
+		}
+
+		if (calibrationMode == CalibrationMode::Center) {
+			const std::int64_t elapsed = qss::MonotonicClock::NowTicks() - calibrationStartTicks;
+			if (elapsed >= qss::MonotonicClock::Frequency() * 3) {
+				FinalizeCenterCalibration();
+			}
+		}
+	}
+
+	void ApplyCalibration(qss::ControllerHand hand) {
+		qss::SharedHandCorrection* destination = hand == qss::ControllerHand::Left
+			? &leftCorrection
+			: &rightCorrection;
+		const qss::CenterCalibrationResult& center = hand == qss::ControllerHand::Left
+			? leftCenterResult
+			: rightCenterResult;
+		const qss::OuterCalibrationResult& outer = hand == qss::ControllerHand::Left
+			? leftOuterResult
+			: rightOuterResult;
+
+		qss::CorrectionSettings settings = ToCorrectionSettings(*destination);
+		if (center.valid) {
+			settings.center = center.center;
+			settings.innerDeadzone = center.recommendedDeadzone;
+		}
+		if (outer.valid) {
+			settings.outerRadius = outer.radius;
+		}
+		const bool wasEnabled = destination->enabled != 0;
+		*destination = ToSharedCorrection(settings);
+		destination->enabled = wasEnabled ? 1U : 0U;
+		MarkCorrectionDirty();
+		calibrationStatus = "Calibration values copied to correction settings.";
+	}
 
 	void CaptureComponents(qss::RecordingData& recording) {
 		const std::uint32_t count = reader.GetComponentCount();
@@ -238,6 +374,7 @@ struct GuiState {
 		live.Reset();
 		nextSequence = 0;
 		configuredComponentCount = 0;
+		components.clear();
 		correctionLoaded = false;
 		correctionDirty = false;
 	}
@@ -288,12 +425,14 @@ struct GuiState {
 		}
 
 		const std::uint32_t componentCount = reader.GetComponentCount();
+		components.resize(componentCount);
 		while (configuredComponentCount < componentCount) {
 			qss::ScalarComponentSnapshot component;
 			if (!reader.ReadComponent(configuredComponentCount, component)) {
 				break;
 			}
 			live.ConfigureComponent(configuredComponentCount, component);
+			components[configuredComponentCount] = component;
 			++configuredComponentCount;
 		}
 		if (recordingActive && activeRecording.components.size() != componentCount) {
@@ -308,6 +447,7 @@ struct GuiState {
 			}
 			for (std::size_t index = 0; index < count; ++index) {
 				live.ConsumeSample(samples[index]);
+				CaptureCalibrationSample(samples[index]);
 				if (recordingActive && samples[index].componentIndex < activeRecording.components.size()) {
 					activeRecording.samples.push_back(samples[index]);
 				}
@@ -460,6 +600,100 @@ void DrawLiveView(GuiState& state) {
 	}
 	ImGui::PopID();
 	ImGui::EndChild();
+}
+
+void DrawCalibrationHand(
+	GuiState& state,
+	qss::ControllerHand hand,
+	const char* title,
+	const qss::CenterCalibrationResult& center,
+	const qss::OuterCalibrationResult& outer
+) {
+	ImGui::SeparatorText(title);
+	const bool busy = state.calibrationMode != CalibrationMode::None;
+	if (!busy) {
+		if (ImGui::Button("Measure center")) {
+			state.StartCenterCalibration(hand);
+		}
+		ImGui::SameLine();
+		if (ImGui::Button("Measure outer range")) {
+			state.StartOuterCalibration(hand);
+		}
+	}
+
+	if (center.valid) {
+		ImGui::Text(
+			"Center: X %+.5f  Y %+.5f  Noise P99 %.5f  Deadzone %.5f",
+			center.center.x,
+			center.center.y,
+			center.noiseRadiusP99,
+			center.recommendedDeadzone
+		);
+	} else {
+		ImGui::TextDisabled("Center: not measured");
+	}
+
+	ImGui::Text(
+		"Outer directions: %zu / %zu%s",
+		outer.measuredDirectionCount,
+		qss::kOuterDirectionCount,
+		outer.valid ? "" : " (insufficient)"
+	);
+
+	if (center.valid || outer.valid) {
+		if (ImGui::Button("Apply measured values")) {
+			state.ApplyCalibration(hand);
+		}
+	}
+}
+
+void DrawCalibrationView(GuiState& state) {
+	if (!state.connected) {
+		ImGui::TextDisabled("SteamVR Probe is offline.");
+		return;
+	}
+	if (state.calibrationMode != CalibrationMode::None) {
+		const char* hand = state.calibrationHand == qss::ControllerHand::Left ? "Left" : "Right";
+		const char* mode = state.calibrationMode == CalibrationMode::Center ? "Center" : "Outer range";
+		ImGui::Text("%s / %s measurement in progress", hand, mode);
+		ImGui::Text("Captured samples: %zu", state.calibrationSamples.size());
+		ImGui::TextWrapped("%s", state.calibrationStatus.c_str());
+		if (state.calibrationMode == CalibrationMode::Outer && ImGui::Button("Finish outer measurement")) {
+			state.FinalizeOuterCalibration();
+		}
+		if (ImGui::Button("Cancel measurement")) {
+			state.calibrationMode = CalibrationMode::None;
+			state.calibrationSamples.clear();
+			state.calibrationStatus = "Measurement cancelled.";
+		}
+		ImGui::Separator();
+	}
+
+	ImGui::PushID("CalibrationLeft");
+	DrawCalibrationHand(
+		state,
+		qss::ControllerHand::Left,
+		"Left Stick",
+		state.leftCenterResult,
+		state.leftOuterResult
+	);
+	ImGui::PopID();
+
+	ImGui::Spacing();
+	ImGui::PushID("CalibrationRight");
+	DrawCalibrationHand(
+		state,
+		qss::ControllerHand::Right,
+		"Right Stick",
+		state.rightCenterResult,
+		state.rightOuterResult
+	);
+	ImGui::PopID();
+
+	if (!state.calibrationStatus.empty() && state.calibrationMode == CalibrationMode::None) {
+		ImGui::Spacing();
+		ImGui::TextWrapped("%s", state.calibrationStatus.c_str());
+	}
 }
 
 void DrawRecordingView(GuiState& state) {
@@ -621,7 +855,7 @@ void DrawMainWindow(GuiState& state) {
 			ImGui::EndTabItem();
 		}
 		if (ImGui::BeginTabItem("Calibration")) {
-			DrawPlaceholder("Calibration", "Center and outer-range calibration will be connected after live observation is verified on the target hardware.");
+			DrawCalibrationView(state);
 			ImGui::EndTabItem();
 		}
 		if (ImGui::BeginTabItem("Recording")) {
