@@ -54,8 +54,8 @@ void RecalculateRecordingOutputs(
 		targets[index].semantic = recording.components[index].semantic;
 	}
 
-	RawStick left;
-	RawStick right;
+	RawStick left{{recording.initialLeftX, recording.initialLeftY}};
+	RawStick right{{recording.initialRightX, recording.initialRightY}};
 	for (SharedScalarSample& sample : recording.samples) {
 		sample.outputValue = sample.rawValue;
 		sample.flags &= ~kSampleFlagCorrectionApplied;

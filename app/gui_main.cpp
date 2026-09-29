@@ -21,8 +21,10 @@
 #include <climits>
 #include <cwchar>
 #include <filesystem>
+#include <functional>
 #include <iterator>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -148,7 +150,8 @@ struct GuiState {
 	}
 
 	bool StartRecording() {
-		if (!connected || recordingActive) {
+		if (!connected || !correctionLoaded || recordingActive) {
+			recordingStatus = "Waiting for SteamVR input and correction state.";
 			return false;
 		}
 		activeRecording = {};
@@ -157,6 +160,12 @@ struct GuiState {
 		activeRecording.probeState = reader.GetProbeState();
 		activeRecording.leftCorrection = leftCorrection;
 		activeRecording.rightCorrection = rightCorrection;
+		const qss::LiveStickState& left = live.GetLeft();
+		const qss::LiveStickState& right = live.GetRight();
+		activeRecording.initialLeftX = left.x.rawValue;
+		activeRecording.initialLeftY = left.y.rawValue;
+		activeRecording.initialRightX = right.x.rawValue;
+		activeRecording.initialRightY = right.y.rawValue;
 		CaptureComponents(activeRecording);
 		recordingActive = true;
 		recordingStatus = "Recording...";

@@ -11,7 +11,7 @@ namespace qss {
 namespace {
 
 constexpr std::array<char, 8> kMagic = {'Q', 'S', 'S', 'R', 'E', 'C', '1', '\0'};
-constexpr std::uint32_t kFormatVersion = 2;
+constexpr std::uint32_t kFormatVersion = 3;
 constexpr std::uint32_t kMaxComponentCount = 4096;
 constexpr std::uint64_t kMaxSampleCount = 100000000ULL;
 
@@ -166,7 +166,11 @@ bool SaveRecording(
 		!WriteValue(stream, recording.sessionId) ||
 		!WriteValue(stream, static_cast<std::uint32_t>(recording.probeState)) ||
 		!WriteHandCorrection(stream, recording.leftCorrection) ||
-		!WriteHandCorrection(stream, recording.rightCorrection)) {
+		!WriteHandCorrection(stream, recording.rightCorrection) ||
+		!WriteValue(stream, recording.initialLeftX) ||
+		!WriteValue(stream, recording.initialLeftY) ||
+		!WriteValue(stream, recording.initialRightX) ||
+		!WriteValue(stream, recording.initialRightY)) {
 		SetError(errorMessage, "Failed to write recording header.");
 		return false;
 	}
@@ -217,7 +221,11 @@ bool LoadRecording(
 		!ReadValue(stream, loaded.sessionId) ||
 		!ReadValue(stream, probeState) ||
 		!ReadHandCorrection(stream, loaded.leftCorrection) ||
-		!ReadHandCorrection(stream, loaded.rightCorrection)) {
+		!ReadHandCorrection(stream, loaded.rightCorrection) ||
+		!ReadValue(stream, loaded.initialLeftX) ||
+		!ReadValue(stream, loaded.initialLeftY) ||
+		!ReadValue(stream, loaded.initialRightX) ||
+		!ReadValue(stream, loaded.initialRightY)) {
 		SetError(errorMessage, "Recording header is truncated.");
 		return false;
 	}

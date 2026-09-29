@@ -15,6 +15,10 @@ struct RecordingData {
 	ProbeState probeState = ProbeState::Offline;
 	SharedHandCorrection leftCorrection{};
 	SharedHandCorrection rightCorrection{};
+	float initialLeftX = 0.0F;
+	float initialLeftY = 0.0F;
+	float initialRightX = 0.0F;
+	float initialRightY = 0.0F;
 	std::vector<ScalarComponentSnapshot> components;
 	std::vector<SharedScalarSample> samples;
 };

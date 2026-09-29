@@ -25,6 +25,10 @@ TEST(RecordingTests, RoundTripsComponentsAndSamples) {
 	source.leftCorrection.innerDeadzone = 0.12F;
 	source.leftCorrection.outerRadius.fill(0.9F);
 	source.rightCorrection.outerRadius.fill(1.0F);
+	source.initialLeftX = 0.2F;
+	source.initialLeftY = -0.3F;
+	source.initialRightX = 0.4F;
+	source.initialRightY = -0.5F;
 
 	qss::ScalarComponentSnapshot component;
 	component.handle = 123;
@@ -61,6 +65,10 @@ TEST(RecordingTests, RoundTripsComponentsAndSamples) {
 	EXPECT_FLOAT_EQ(loaded.leftCorrection.centerX, 0.08F);
 	EXPECT_FLOAT_EQ(loaded.leftCorrection.innerDeadzone, 0.12F);
 	EXPECT_FLOAT_EQ(loaded.leftCorrection.outerRadius[17], 0.9F);
+	EXPECT_FLOAT_EQ(loaded.initialLeftX, 0.2F);
+	EXPECT_FLOAT_EQ(loaded.initialLeftY, -0.3F);
+	EXPECT_FLOAT_EQ(loaded.initialRightX, 0.4F);
+	EXPECT_FLOAT_EQ(loaded.initialRightY, -0.5F);
 	EXPECT_EQ(loaded.components[0].hand, qss::ControllerHand::Left);
 	EXPECT_EQ(loaded.components[0].semantic, qss::ScalarSemantic::JoystickX);
 	EXPECT_STREQ(loaded.components[0].path.data(), "/input/joystick/x");

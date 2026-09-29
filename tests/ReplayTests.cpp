@@ -44,6 +44,27 @@ TEST(ReplayTests, AppliesCorrectionUsingLatestPairedAxis) {
 	EXPECT_NE(recording.samples[1].flags & qss::kSampleFlagCorrectionApplied, 0U);
 }
 
+TEST(ReplayTests, UsesInitialOtherAxisWhenFirstRecordedSampleIsOneAxis) {
+	qss::RecordingData recording;
+	recording.initialLeftY = 0.8F;
+	recording.components.push_back(MakeComponent(
+		qss::ControllerHand::Left,
+		qss::ScalarSemantic::JoystickX
+	));
+	recording.samples.push_back({100, 1, 0, 0.8F, 0.8F, 0.0, 0});
+
+	qss::ReplayCorrectionSettings settings;
+	settings.left.enabled = true;
+	settings.left.centerOffsetEnabled = false;
+	settings.left.innerDeadzoneEnabled = false;
+	settings.left.outerNormalizationEnabled = false;
+	settings.left.clampEnabled = true;
+
+	qss::RecalculateRecordingOutputs(recording, settings);
+
+	EXPECT_NEAR(recording.samples[0].outputValue, 0.7071F, 0.001F);
+}
+
 TEST(ReplayTests, UsesRadialDeadzoneAcrossAxes) {
 	qss::RecordingData recording;
 	recording.components.push_back(MakeComponent(
