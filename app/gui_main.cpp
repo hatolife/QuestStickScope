@@ -125,6 +125,65 @@ qss::CorrectionSettings ToCorrectionSettings(const qss::SharedHandCorrection& sh
 	return settings;
 }
 
+qss::WindowsInputKind ToWindowsInputKind(qss::WindowsMouseEventType type) {
+	switch (type) {
+	case qss::WindowsMouseEventType::Move:
+		return qss::WindowsInputKind::Move;
+	case qss::WindowsMouseEventType::Wheel:
+		return qss::WindowsInputKind::Wheel;
+	case qss::WindowsMouseEventType::HorizontalWheel:
+		return qss::WindowsInputKind::HorizontalWheel;
+	case qss::WindowsMouseEventType::LeftDown:
+	case qss::WindowsMouseEventType::LeftUp:
+	case qss::WindowsMouseEventType::RightDown:
+	case qss::WindowsMouseEventType::RightUp:
+	case qss::WindowsMouseEventType::MiddleDown:
+	case qss::WindowsMouseEventType::MiddleUp:
+	case qss::WindowsMouseEventType::XButtonDown:
+	case qss::WindowsMouseEventType::XButtonUp:
+		return qss::WindowsInputKind::Button;
+	case qss::WindowsMouseEventType::Unknown:
+		return qss::WindowsInputKind::Unknown;
+	}
+	return qss::WindowsInputKind::Unknown;
+}
+
+qss::WindowsInputSample ToRecordingSample(const qss::WindowsMouseEvent& event) {
+	qss::WindowsInputSample sample;
+	sample.timestampTicks = event.timestampTicks;
+	sample.source = qss::WindowsInputSource::LowLevelMouse;
+	sample.kind = ToWindowsInputKind(event.type);
+	sample.x = event.x;
+	sample.y = event.y;
+	sample.wheelDelta = event.wheelDelta;
+	sample.flags = event.flags;
+	sample.extraInfo = static_cast<std::uint64_t>(event.extraInfo);
+	return sample;
+}
+
+qss::WindowsInputSample ToRecordingSample(const qss::WindowsRawMouseEvent& event) {
+	qss::WindowsInputSample sample;
+	sample.timestampTicks = event.timestampTicks;
+	sample.source = qss::WindowsInputSource::RawInputMouse;
+	if ((event.buttonFlags & RI_MOUSE_WHEEL) != 0) {
+		sample.kind = qss::WindowsInputKind::Wheel;
+	} else if ((event.buttonFlags & RI_MOUSE_HWHEEL) != 0) {
+		sample.kind = qss::WindowsInputKind::HorizontalWheel;
+	} else if (event.buttonFlags != 0) {
+		sample.kind = qss::WindowsInputKind::Button;
+	} else {
+		sample.kind = qss::WindowsInputKind::Move;
+	}
+	sample.deltaX = event.deltaX;
+	sample.deltaY = event.deltaY;
+	sample.wheelDelta = event.wheelDelta;
+	sample.flags =
+		static_cast<std::uint32_t>(event.mouseFlags) |
+		(static_cast<std::uint32_t>(event.buttonFlags) << 16);
+	sample.device = static_cast<std::uint64_t>(event.device);
+	return sample;
+}
+
 enum class CalibrationMode {
 	None,
 	Center,
@@ -406,23 +465,31 @@ struct GuiState {
 	}
 
 	bool StartRecording() {
-		if (!connected || !correctionLoaded || recordingActive) {
-			recordingStatus = "Waiting for SteamVR input and correction state.";
+		const bool windowsAvailable =
+			windowsMouseObserver.IsRunning() || windowsRawInputObserver.IsRunning();
+		if ((!connected && !windowsAvailable) || recordingActive) {
+			recordingStatus = "No observable input source is available.";
 			return false;
 		}
 		activeRecording = {};
 		activeRecording.qpcFrequency = static_cast<std::uint64_t>(qss::MonotonicClock::Frequency());
-		activeRecording.sessionId = sessionId;
-		activeRecording.probeState = reader.GetProbeState();
-		activeRecording.leftCorrection = leftCorrection;
-		activeRecording.rightCorrection = rightCorrection;
-		const qss::LiveStickState& left = live.GetLeft();
-		const qss::LiveStickState& right = live.GetRight();
-		activeRecording.initialLeftX = left.x.rawValue;
-		activeRecording.initialLeftY = left.y.rawValue;
-		activeRecording.initialRightX = right.x.rawValue;
-		activeRecording.initialRightY = right.y.rawValue;
-		CaptureComponents(activeRecording);
+		activeRecording.sessionId = connected ? sessionId : 0;
+		activeRecording.probeState = connected ? reader.GetProbeState() : qss::ProbeState::Offline;
+		activeRecording.leftCorrection = correctionLoaded
+			? leftCorrection
+			: qss::MakeDefaultSharedCorrection();
+		activeRecording.rightCorrection = correctionLoaded
+			? rightCorrection
+			: qss::MakeDefaultSharedCorrection();
+		if (connected) {
+			const qss::LiveStickState& left = live.GetLeft();
+			const qss::LiveStickState& right = live.GetRight();
+			activeRecording.initialLeftX = left.x.rawValue;
+			activeRecording.initialLeftY = left.y.rawValue;
+			activeRecording.initialRightX = right.x.rawValue;
+			activeRecording.initialRightY = right.y.rawValue;
+			CaptureComponents(activeRecording);
+		}
 		recordingActive = true;
 		recordingStatus = "Recording...";
 		return true;
@@ -515,6 +582,11 @@ struct GuiState {
 		const std::size_t count = windowsMouseObserver.ReadEvents(events.data(), events.size());
 		for (std::size_t index = 0; index < count; ++index) {
 			windowsMouseEvents.push_back(events[index]);
+			if (recordingActive) {
+				activeRecording.windowsInputSamples.push_back(
+					ToRecordingSample(events[index])
+				);
+			}
 		}
 		while (windowsMouseEvents.size() > 300) {
 			windowsMouseEvents.pop_front();
@@ -527,6 +599,11 @@ struct GuiState {
 		);
 		for (std::size_t index = 0; index < rawCount; ++index) {
 			windowsRawMouseEvents.push_back(rawEvents[index]);
+			if (recordingActive) {
+				activeRecording.windowsInputSamples.push_back(
+					ToRecordingSample(rawEvents[index])
+				);
+			}
 		}
 		while (windowsRawMouseEvents.size() > 300) {
 			windowsRawMouseEvents.pop_front();
@@ -965,16 +1042,23 @@ void DrawCalibrationView(GuiState& state) {
 
 void DrawRecordingView(GuiState& state) {
 	ImGui::SeparatorText("Record");
-	if (!state.connected) {
-		ImGui::TextDisabled("SteamVR Probe is offline.");
-	} else if (state.recordingActive) {
+	if (state.recordingActive) {
 		if (ImGui::Button("Stop recording")) {
 			state.StopRecording();
 		}
 		ImGui::SameLine();
-		ImGui::Text("Samples: %zu", state.activeRecording.samples.size());
+		ImGui::Text(
+			"SteamVR samples: %zu   Windows samples: %zu",
+			state.activeRecording.samples.size(),
+			state.activeRecording.windowsInputSamples.size()
+		);
 	} else {
-		if (ImGui::Button("Start recording")) {
+		const bool canRecord = state.connected ||
+			state.windowsMouseObserver.IsRunning() ||
+			state.windowsRawInputObserver.IsRunning();
+		if (!canRecord) {
+			ImGui::TextDisabled("No observable input source is available.");
+		} else if (ImGui::Button("Start recording")) {
 			state.StartRecording();
 		}
 	}
@@ -1016,9 +1100,10 @@ void DrawRecordingView(GuiState& state) {
 	ImGui::Spacing();
 	ImGui::SeparatorText("Replay");
 	ImGui::Text(
-		"Components: %zu   Samples: %zu   Session: %llu",
+		"Components: %zu   SteamVR samples: %zu   Windows samples: %zu   Session: %llu",
 		state.replayRecording.components.size(),
 		state.replayRecording.samples.size(),
+		state.replayRecording.windowsInputSamples.size(),
 		static_cast<unsigned long long>(state.replayRecording.sessionId)
 	);
 
