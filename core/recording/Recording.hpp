@@ -12,6 +12,9 @@ namespace qss {
 struct RecordingData {
 	std::uint64_t qpcFrequency = 0;
 	std::uint64_t sessionId = 0;
+	ProbeState probeState = ProbeState::Offline;
+	SharedHandCorrection leftCorrection{};
+	SharedHandCorrection rightCorrection{};
 	std::vector<ScalarComponentSnapshot> components;
 	std::vector<SharedScalarSample> samples;
 };

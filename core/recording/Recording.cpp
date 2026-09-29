@@ -11,7 +11,7 @@ namespace qss {
 namespace {
 
 constexpr std::array<char, 8> kMagic = {'Q', 'S', 'S', 'R', 'E', 'C', '1', '\0'};
-constexpr std::uint32_t kFormatVersion = 1;
+constexpr std::uint32_t kFormatVersion = 2;
 constexpr std::uint32_t kMaxComponentCount = 4096;
 constexpr std::uint64_t kMaxSampleCount = 100000000ULL;
 
@@ -80,6 +80,44 @@ bool ReadComponent(std::istream& stream, ScalarComponentSnapshot& component) {
 	return true;
 }
 
+bool WriteHandCorrection(std::ostream& stream, const SharedHandCorrection& correction) {
+	if (!WriteValue(stream, correction.enabled) ||
+		!WriteValue(stream, correction.centerOffsetEnabled) ||
+		!WriteValue(stream, correction.innerDeadzoneEnabled) ||
+		!WriteValue(stream, correction.outerNormalizationEnabled) ||
+		!WriteValue(stream, correction.clampEnabled) ||
+		!WriteValue(stream, correction.centerX) ||
+		!WriteValue(stream, correction.centerY) ||
+		!WriteValue(stream, correction.innerDeadzone)) {
+		return false;
+	}
+	for (const float radius : correction.outerRadius) {
+		if (!WriteValue(stream, radius)) {
+			return false;
+		}
+	}
+	return true;
+}
+
+bool ReadHandCorrection(std::istream& stream, SharedHandCorrection& correction) {
+	if (!ReadValue(stream, correction.enabled) ||
+		!ReadValue(stream, correction.centerOffsetEnabled) ||
+		!ReadValue(stream, correction.innerDeadzoneEnabled) ||
+		!ReadValue(stream, correction.outerNormalizationEnabled) ||
+		!ReadValue(stream, correction.clampEnabled) ||
+		!ReadValue(stream, correction.centerX) ||
+		!ReadValue(stream, correction.centerY) ||
+		!ReadValue(stream, correction.innerDeadzone)) {
+		return false;
+	}
+	for (float& radius : correction.outerRadius) {
+		if (!ReadValue(stream, radius)) {
+			return false;
+		}
+	}
+	return true;
+}
+
 bool WriteSample(std::ostream& stream, const SharedScalarSample& sample) {
 	return WriteValue(stream, sample.timestampTicks) &&
 		WriteValue(stream, sample.sequence) &&
@@ -125,7 +163,10 @@ bool SaveRecording(
 		!WriteValue(stream, componentCount) ||
 		!WriteValue(stream, sampleCount) ||
 		!WriteValue(stream, recording.qpcFrequency) ||
-		!WriteValue(stream, recording.sessionId)) {
+		!WriteValue(stream, recording.sessionId) ||
+		!WriteValue(stream, static_cast<std::uint32_t>(recording.probeState)) ||
+		!WriteHandCorrection(stream, recording.leftCorrection) ||
+		!WriteHandCorrection(stream, recording.rightCorrection)) {
 		SetError(errorMessage, "Failed to write recording header.");
 		return false;
 	}
@@ -165,6 +206,7 @@ bool LoadRecording(
 	std::uint32_t version = 0;
 	std::uint32_t componentCount = 0;
 	std::uint64_t sampleCount = 0;
+	std::uint32_t probeState = 0;
 	RecordingData loaded;
 
 	if (!ReadBytes(stream, magic.data(), magic.size()) ||
@@ -172,7 +214,10 @@ bool LoadRecording(
 		!ReadValue(stream, componentCount) ||
 		!ReadValue(stream, sampleCount) ||
 		!ReadValue(stream, loaded.qpcFrequency) ||
-		!ReadValue(stream, loaded.sessionId)) {
+		!ReadValue(stream, loaded.sessionId) ||
+		!ReadValue(stream, probeState) ||
+		!ReadHandCorrection(stream, loaded.leftCorrection) ||
+		!ReadHandCorrection(stream, loaded.rightCorrection)) {
 		SetError(errorMessage, "Recording header is truncated.");
 		return false;
 	}
@@ -184,6 +229,11 @@ bool LoadRecording(
 		SetError(errorMessage, "Recording version is not supported.");
 		return false;
 	}
+	if (probeState > static_cast<std::uint32_t>(ProbeState::Error)) {
+		SetError(errorMessage, "Recording contains an invalid Probe state.");
+		return false;
+	}
+	loaded.probeState = static_cast<ProbeState>(probeState);
 	if (componentCount > kMaxComponentCount || sampleCount > kMaxSampleCount) {
 		SetError(errorMessage, "Recording counts exceed safety limits.");
 		return false;
