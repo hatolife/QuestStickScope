@@ -43,9 +43,16 @@ if(WIN32)
 	add_library(qss_windows_ipc
 		platform/windows/SteamVRSharedMemory.cpp
 	)
+	add_library(qss_windows_input
+		platform/windows/WindowsMouseObserver.cpp
+	)
 	target_include_directories(qss_windows_ipc PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 	target_compile_definitions(qss_windows_ipc PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 	target_link_libraries(qss_windows_ipc PUBLIC qss_platform)
+
+	target_include_directories(qss_windows_input PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+	target_compile_definitions(qss_windows_input PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+	target_link_libraries(qss_windows_input PUBLIC qss_platform)
 endif()
 
 if(QSS_BUILD_APP)
@@ -90,7 +97,7 @@ if(QSS_BUILD_APP)
 
 		add_executable(QuestStickScope WIN32 app/gui_main.cpp)
 		target_compile_definitions(QuestStickScope PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
-		target_link_libraries(QuestStickScope PRIVATE qss_core qss_platform qss_windows_ipc qss_gui_deps shell32 ole32)
+		target_link_libraries(QuestStickScope PRIVATE qss_core qss_platform qss_windows_ipc qss_windows_input qss_gui_deps shell32 ole32)
 
 		add_executable(QuestStickScopeCli app/main.cpp)
 		target_compile_definitions(QuestStickScopeCli PRIVATE QSS_WINDOWS_IPC=1 WIN32_LEAN_AND_MEAN NOMINMAX)

@@ -8,6 +8,7 @@
 #include "core/recording/Replay.hpp"
 #include "platform/Clock.hpp"
 #include "platform/windows/SteamVRSharedMemory.hpp"
+#include "platform/windows/WindowsMouseObserver.hpp"
 
 #include <d3d11.h>
 #include <ShlObj.h>
@@ -136,6 +137,8 @@ struct GuiState {
 	std::vector<bool> componentHasSample;
 	std::deque<qss::StickPointSample> leftHistory;
 	std::deque<qss::StickPointSample> rightHistory;
+	qss::WindowsMouseObserver windowsMouseObserver;
+	std::deque<qss::WindowsMouseEvent> windowsMouseEvents;
 	qss::SharedHandCorrection leftCorrection{};
 	qss::SharedHandCorrection rightCorrection{};
 	std::uint64_t sessionId = 0;
@@ -169,6 +172,7 @@ struct GuiState {
 	std::string persistenceStatus;
 
 	GuiState() {
+		windowsMouseObserver.Start();
 		std::string error;
 		const std::filesystem::path path = GetCalibrationPath();
 		if (!path.empty() &&
@@ -486,7 +490,19 @@ struct GuiState {
 		persistentCorrectionChangedTicks = qss::MonotonicClock::NowTicks();
 	}
 
+	void UpdateWindowsInput() {
+		std::array<qss::WindowsMouseEvent, 256> events{};
+		const std::size_t count = windowsMouseObserver.ReadEvents(events.data(), events.size());
+		for (std::size_t index = 0; index < count; ++index) {
+			windowsMouseEvents.push_back(events[index]);
+		}
+		while (windowsMouseEvents.size() > 300) {
+			windowsMouseEvents.pop_front();
+		}
+	}
+
 	void Update() {
+		UpdateWindowsInput();
 		if (!reader.IsOpen()) {
 			connected = reader.Open();
 			if (!connected) {
@@ -728,6 +744,10 @@ void DrawPipeline(const GuiState& state) {
 	ImGui::TextUnformatted(" -> ");
 	ImGui::SameLine();
 	ImGui::Text("SteamVR S0: %s", state.connected ? ProbeStateName(state.reader.GetProbeState()) : "Offline");
+	ImGui::Text(
+		"Windows W0: %s",
+		state.windowsMouseObserver.IsRunning() ? "Mouse observation active" : "Unavailable"
+	);
 	ImGui::TextDisabled("Unobserved layers remain explicitly unobserved. No inferred values are shown.");
 	ImGui::EndChild();
 }
@@ -998,6 +1018,83 @@ void DrawRecordingView(GuiState& state) {
 	ImGui::EndChild();
 }
 
+const char* MouseEventTypeName(qss::WindowsMouseEventType type) {
+	switch (type) {
+	case qss::WindowsMouseEventType::Move:
+		return "Move";
+	case qss::WindowsMouseEventType::LeftDown:
+		return "Left Down";
+	case qss::WindowsMouseEventType::LeftUp:
+		return "Left Up";
+	case qss::WindowsMouseEventType::RightDown:
+		return "Right Down";
+	case qss::WindowsMouseEventType::RightUp:
+		return "Right Up";
+	case qss::WindowsMouseEventType::MiddleDown:
+		return "Middle Down";
+	case qss::WindowsMouseEventType::MiddleUp:
+		return "Middle Up";
+	case qss::WindowsMouseEventType::Wheel:
+		return "Wheel";
+	case qss::WindowsMouseEventType::HorizontalWheel:
+		return "HWheel";
+	case qss::WindowsMouseEventType::XButtonDown:
+		return "X Down";
+	case qss::WindowsMouseEventType::XButtonUp:
+		return "X Up";
+	case qss::WindowsMouseEventType::Unknown:
+		return "Unknown";
+	}
+	return "Unknown";
+}
+
+void DrawWindowsInputDiagnostics(GuiState& state) {
+	ImGui::SeparatorText("Windows W0 / Mouse");
+	ImGui::Text(
+		"Observer: %s   Buffered events: %zu   Dropped: %zu",
+		state.windowsMouseObserver.IsRunning() ? "Active" : "Unavailable",
+		state.windowsMouseEvents.size(),
+		state.windowsMouseObserver.DroppedCount()
+	);
+	ImGui::TextDisabled("Injected indicates that Windows marked the event as software-injected.");
+
+	if (ImGui::BeginTable(
+		"WindowsMouseEvents",
+		6,
+		ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY,
+		ImVec2(0.0F, 220.0F)
+	)) {
+		ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthFixed, 90.0F);
+		ImGui::TableSetupColumn("X", ImGuiTableColumnFlags_WidthFixed, 75.0F);
+		ImGui::TableSetupColumn("Y", ImGuiTableColumnFlags_WidthFixed, 75.0F);
+		ImGui::TableSetupColumn("Wheel", ImGuiTableColumnFlags_WidthFixed, 70.0F);
+		ImGui::TableSetupColumn("Injected", ImGuiTableColumnFlags_WidthFixed, 70.0F);
+		ImGui::TableSetupColumn("Flags", ImGuiTableColumnFlags_WidthFixed, 85.0F);
+		ImGui::TableHeadersRow();
+
+		const std::size_t first = state.windowsMouseEvents.size() > 100
+			? state.windowsMouseEvents.size() - 100
+			: 0;
+		for (std::size_t index = first; index < state.windowsMouseEvents.size(); ++index) {
+			const qss::WindowsMouseEvent& event = state.windowsMouseEvents[index];
+			ImGui::TableNextRow();
+			ImGui::TableSetColumnIndex(0);
+			ImGui::TextUnformatted(MouseEventTypeName(event.type));
+			ImGui::TableSetColumnIndex(1);
+			ImGui::Text("%d", event.x);
+			ImGui::TableSetColumnIndex(2);
+			ImGui::Text("%d", event.y);
+			ImGui::TableSetColumnIndex(3);
+			ImGui::Text("%d", event.wheelDelta);
+			ImGui::TableSetColumnIndex(4);
+			ImGui::TextUnformatted((event.flags & LLMHF_INJECTED) != 0 ? "Yes" : "No");
+			ImGui::TableSetColumnIndex(5);
+			ImGui::Text("0x%08X", event.flags);
+		}
+		ImGui::EndTable();
+	}
+}
+
 void DrawDiagnosticsView(GuiState& state) {
 	if (!state.connected) {
 		ImGui::TextDisabled("SteamVR Probe: Offline");
@@ -1062,6 +1159,8 @@ void DrawDiagnosticsView(GuiState& state) {
 		}
 		ImGui::EndTable();
 	}
+
+	DrawWindowsInputDiagnostics(state);
 }
 
 void DrawPlaceholder(const char* title, const char* message) {
