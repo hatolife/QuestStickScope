@@ -244,6 +244,8 @@ struct GuiState {
 	qss::ControllerHand calibrationHand = qss::ControllerHand::Unknown;
 	std::int64_t calibrationStartTicks = 0;
 	std::vector<qss::Vec2> calibrationSamples;
+	bool calibrationXUpdated = false;
+	bool calibrationYUpdated = false;
 	qss::CenterCalibrationResult leftCenterResult;
 	qss::CenterCalibrationResult rightCenterResult;
 	qss::OuterCalibrationResult leftOuterResult;
@@ -311,6 +313,8 @@ struct GuiState {
 		calibrationHand = hand;
 		calibrationStartTicks = qss::MonotonicClock::NowTicks();
 		calibrationSamples.clear();
+		calibrationXUpdated = false;
+		calibrationYUpdated = false;
 		calibrationStatus = "Release the stick. Measurement starts after 5 seconds and runs for 10 seconds.";
 	}
 
@@ -319,6 +323,8 @@ struct GuiState {
 		calibrationHand = hand;
 		calibrationStartTicks = qss::MonotonicClock::NowTicks();
 		calibrationSamples.clear();
+		calibrationXUpdated = false;
+		calibrationYUpdated = false;
 		calibrationStatus = "Prepare to rotate the stick around the outer edge. Measurement starts after 5 seconds and runs for 10 seconds.";
 	}
 
@@ -330,6 +336,8 @@ struct GuiState {
 			rightCenterResult = result;
 		}
 		calibrationMode = CalibrationMode::None;
+		calibrationXUpdated = false;
+		calibrationYUpdated = false;
 		calibrationStatus = result.valid ? "Center measurement completed." : "Center measurement failed: not enough samples.";
 	}
 
@@ -353,6 +361,8 @@ struct GuiState {
 				: "Outer-range coverage is insufficient.";
 		}
 		calibrationMode = CalibrationMode::None;
+		calibrationXUpdated = false;
+		calibrationYUpdated = false;
 	}
 
 	double GetCalibrationElapsedSeconds() const {
@@ -371,19 +381,6 @@ struct GuiState {
 			elapsed < kCalibrationWaitSeconds + kCalibrationMeasureSeconds;
 	}
 
-	void UpdateCenterCalibration() {
-		if (calibrationMode != CalibrationMode::Center ||
-			!IsCalibrationMeasuring()) {
-			return;
-		}
-		const qss::LiveStickState& stick = calibrationHand == qss::ControllerHand::Left
-			? live.GetLeft()
-			: live.GetRight();
-		if (stick.x.available && stick.y.available && calibrationSamples.size() < 500000) {
-			calibrationSamples.push_back({stick.x.rawValue, stick.y.rawValue});
-		}
-	}
-
 	void UpdateCalibrationTiming() {
 		if (calibrationMode == CalibrationMode::None) {
 			return;
@@ -400,27 +397,35 @@ struct GuiState {
 	}
 
 	void CaptureCalibrationSample(const qss::SharedScalarSample& sample) {
-		if (calibrationMode != CalibrationMode::Outer ||
+		if (calibrationMode == CalibrationMode::None ||
 			!IsCalibrationMeasuring() ||
 			sample.componentIndex >= components.size()) {
 			return;
 		}
 		const qss::ScalarComponentSnapshot& component = components[sample.componentIndex];
-		if (component.hand != calibrationHand ||
-			(component.semantic != qss::ScalarSemantic::JoystickX &&
-			 component.semantic != qss::ScalarSemantic::JoystickY)) {
+		if (component.hand != calibrationHand) {
+			return;
+		}
+
+		if (component.semantic == qss::ScalarSemantic::JoystickX) {
+			calibrationXUpdated = true;
+		} else if (component.semantic == qss::ScalarSemantic::JoystickY) {
+			calibrationYUpdated = true;
+		} else {
+			return;
+		}
+		if (!calibrationXUpdated || !calibrationYUpdated) {
 			return;
 		}
 
 		const qss::LiveStickState& stick = calibrationHand == qss::ControllerHand::Left
 			? live.GetLeft()
 			: live.GetRight();
-		if (!stick.x.available || !stick.y.available) {
-			return;
-		}
-		if (calibrationSamples.size() < 500000) {
+		if (stick.x.available && stick.y.available && calibrationSamples.size() < 500000) {
 			calibrationSamples.push_back({stick.x.rawValue, stick.y.rawValue});
 		}
+		calibrationXUpdated = false;
+		calibrationYUpdated = false;
 	}
 
 	void ApplyCalibration(qss::ControllerHand hand) {
@@ -807,7 +812,6 @@ struct GuiState {
 				}
 			}
 		}
-		UpdateCenterCalibration();
 		UpdateCalibrationTiming();
 	}
 };
@@ -1122,6 +1126,71 @@ void DrawLiveView(GuiState& state) {
 	ImGui::PopID();
 }
 
+void DrawCalibrationRangePlot(
+	const char* plotId,
+	const qss::CenterCalibrationResult& center,
+	const qss::OuterCalibrationResult& outer
+) {
+	if (!center.valid && outer.measuredDirectionCount == 0) {
+		return;
+	}
+
+	constexpr std::size_t pointCount = qss::kCorrectionDirectionCount + 1;
+	constexpr double pi = 3.14159265358979323846;
+	std::array<double, pointCount> innerX{};
+	std::array<double, pointCount> innerY{};
+	std::array<double, pointCount> outerX{};
+	std::array<double, pointCount> outerY{};
+
+	for (std::size_t point = 0; point < pointCount; ++point) {
+		const std::size_t direction = point % qss::kCorrectionDirectionCount;
+		const double angle =
+			2.0 * pi * static_cast<double>(direction) /
+			static_cast<double>(qss::kCorrectionDirectionCount);
+		const double cosine = std::cos(angle);
+		const double sine = std::sin(angle);
+		const double innerRadius = center.valid
+			? static_cast<double>(center.innerRadius[direction])
+			: 0.0;
+		const double outerRadius = outer.measuredDirectionCount > 0
+			? static_cast<double>(outer.radius[direction])
+			: 1.0;
+		innerX[point] = cosine * innerRadius;
+		innerY[point] = sine * innerRadius;
+		outerX[point] = cosine * outerRadius;
+		outerY[point] = sine * outerRadius;
+	}
+
+	const float availableWidth = ImGui::GetContentRegionAvail().x;
+	const float plotSize = std::min(availableWidth, 320.0F);
+	if (ImPlot::BeginPlot(plotId, ImVec2(plotSize, plotSize), ImPlotFlags_Equal)) {
+		ImPlot::SetupAxes(
+			nullptr,
+			nullptr,
+			ImPlotAxisFlags_NoTickLabels | ImPlotAxisFlags_Lock,
+			ImPlotAxisFlags_NoTickLabels | ImPlotAxisFlags_Lock
+		);
+		ImPlot::SetupAxesLimits(-1.1, 1.1, -1.1, 1.1, ImGuiCond_Always);
+		if (center.valid) {
+			ImPlot::PlotLine(
+				"Effective inner",
+				innerX.data(),
+				innerY.data(),
+				static_cast<int>(pointCount)
+			);
+		}
+		if (outer.measuredDirectionCount > 0) {
+			ImPlot::PlotLine(
+				"Effective outer",
+				outerX.data(),
+				outerY.data(),
+				static_cast<int>(pointCount)
+			);
+		}
+		ImPlot::EndPlot();
+	}
+}
+
 void DrawCalibrationHand(
 	GuiState& state,
 	qss::ControllerHand hand,
@@ -1188,6 +1257,8 @@ void DrawCalibrationHand(
 		ImGui::TextDisabled("Outer range: not measured");
 	}
 
+	DrawCalibrationRangePlot("##Range", center, outer);
+
 	if (center.valid || outer.valid) {
 		if (ImGui::Button("Apply measured values")) {
 			state.ApplyCalibration(hand);
@@ -1222,6 +1293,8 @@ void DrawCalibrationView(GuiState& state) {
 		if (ImGui::Button("Cancel measurement")) {
 			state.calibrationMode = CalibrationMode::None;
 			state.calibrationSamples.clear();
+			state.calibrationXUpdated = false;
+			state.calibrationYUpdated = false;
 			state.calibrationStatus = "Measurement cancelled.";
 		}
 		ImGui::Separator();
