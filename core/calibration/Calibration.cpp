@@ -2,11 +2,14 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <numbers>
 #include <utility>
 
 namespace qss {
 namespace {
+
+constexpr std::size_t kAngularWindowDegrees = 2;
 
 float Percentile(std::vector<float> values, float percentile) {
 	if (values.empty()) {
@@ -33,27 +36,60 @@ std::size_t DirectionIndex(Vec2 value) {
 	if (angle < 0.0F) {
 		angle += 2.0F * std::numbers::pi_v<float>;
 	}
-	const float scaled = angle * static_cast<float>(kOuterDirectionCount) /
+	const float scaled = angle * static_cast<float>(kCorrectionDirectionCount) /
 		(2.0F * std::numbers::pi_v<float>);
-	return static_cast<std::size_t>(std::floor(scaled)) % kOuterDirectionCount;
+	return static_cast<std::size_t>(std::floor(scaled)) % kCorrectionDirectionCount;
 }
 
-void FillMissingDirections(OuterCalibrationResult& result) {
-	if (result.measuredDirectionCount == 0) {
-		result.radius.fill(1.0F);
+std::vector<float> GatherAngularWindow(
+	const std::array<std::vector<float>, kCorrectionDirectionCount>& bins,
+	std::size_t direction
+) {
+	std::vector<float> values;
+	for (int offset = -static_cast<int>(kAngularWindowDegrees);
+		offset <= static_cast<int>(kAngularWindowDegrees);
+		++offset) {
+		const std::size_t index = (
+			direction +
+			kCorrectionDirectionCount +
+			static_cast<std::size_t>(
+				offset + static_cast<int>(kCorrectionDirectionCount)
+			)
+		) % kCorrectionDirectionCount;
+		values.insert(values.end(), bins[index].begin(), bins[index].end());
+	}
+	return values;
+}
+
+template <typename Array>
+void FillMissingCircular(
+	Array& values,
+	const std::array<bool, kCorrectionDirectionCount>& measured,
+	float fallback
+) {
+	std::size_t measuredCount = 0;
+	for (const bool value : measured) {
+		if (value) {
+			++measuredCount;
+		}
+	}
+	if (measuredCount == 0) {
+		values.fill(fallback);
 		return;
 	}
 
-	for (std::size_t index = 0; index < kOuterDirectionCount; ++index) {
-		if (result.measured[index]) {
+	for (std::size_t index = 0; index < kCorrectionDirectionCount; ++index) {
+		if (measured[index]) {
 			continue;
 		}
 
 		std::size_t previous = index;
 		std::size_t previousDistance = 0;
-		for (std::size_t distance = 1; distance < kOuterDirectionCount; ++distance) {
-			const std::size_t candidate = (index + kOuterDirectionCount - distance) % kOuterDirectionCount;
-			if (result.measured[candidate]) {
+		for (std::size_t distance = 1; distance < kCorrectionDirectionCount; ++distance) {
+			const std::size_t candidate =
+				(index + kCorrectionDirectionCount - distance) %
+				kCorrectionDirectionCount;
+			if (measured[candidate]) {
 				previous = candidate;
 				previousDistance = distance;
 				break;
@@ -62,9 +98,10 @@ void FillMissingDirections(OuterCalibrationResult& result) {
 
 		std::size_t next = index;
 		std::size_t nextDistance = 0;
-		for (std::size_t distance = 1; distance < kOuterDirectionCount; ++distance) {
-			const std::size_t candidate = (index + distance) % kOuterDirectionCount;
-			if (result.measured[candidate]) {
+		for (std::size_t distance = 1; distance < kCorrectionDirectionCount; ++distance) {
+			const std::size_t candidate =
+				(index + distance) % kCorrectionDirectionCount;
+			if (measured[candidate]) {
 				next = candidate;
 				nextDistance = distance;
 				break;
@@ -72,28 +109,97 @@ void FillMissingDirections(OuterCalibrationResult& result) {
 		}
 
 		if (previousDistance == 0 && nextDistance == 0) {
-			result.radius[index] = 1.0F;
-			continue;
+			values[index] = fallback;
+		} else if (previousDistance == 0) {
+			values[index] = values[next];
+		} else if (nextDistance == 0) {
+			values[index] = values[previous];
+		} else {
+			const float t = static_cast<float>(previousDistance) /
+				static_cast<float>(previousDistance + nextDistance);
+			values[index] =
+				values[previous] + (values[next] - values[previous]) * t;
 		}
-		if (previousDistance == 0) {
-			result.radius[index] = result.radius[next];
-			continue;
-		}
-		if (nextDistance == 0) {
-			result.radius[index] = result.radius[previous];
+	}
+}
+
+void AnalyzeInnerDirections(
+	const std::array<std::vector<float>, kCorrectionDirectionCount>& bins,
+	std::size_t minimumSamplesPerDirection,
+	CenterCalibrationResult& result
+) {
+	for (std::size_t direction = 0; direction < kCorrectionDirectionCount; ++direction) {
+		std::vector<float> values = GatherAngularWindow(bins, direction);
+		if (values.size() < minimumSamplesPerDirection) {
 			continue;
 		}
 
-		const float t = static_cast<float>(previousDistance) /
-			static_cast<float>(previousDistance + nextDistance);
-		result.radius[index] = result.radius[previous] +
-			(result.radius[next] - result.radius[previous]) * t;
+		const auto [minimum, maximum] =
+			std::minmax_element(values.begin(), values.end());
+		result.minimumRadius[direction] = *minimum;
+		result.maximumRadius[direction] = *maximum;
+		result.innerRadius[direction] = std::clamp(
+			Percentile(values, 0.99F) * 1.10F,
+			0.0F,
+			0.50F
+		);
+		result.measured[direction] = true;
+		++result.measuredDirectionCount;
 	}
+
+	FillMissingCircular(
+		result.minimumRadius,
+		result.measured,
+		0.0F
+	);
+	FillMissingCircular(
+		result.maximumRadius,
+		result.measured,
+		result.recommendedDeadzone
+	);
+	FillMissingCircular(
+		result.innerRadius,
+		result.measured,
+		result.recommendedDeadzone
+	);
+}
+
+void AnalyzeOuterDirections(
+	const std::array<std::vector<float>, kCorrectionDirectionCount>& bins,
+	std::size_t minimumSamplesPerDirection,
+	OuterCalibrationResult& result
+) {
+	for (std::size_t direction = 0; direction < kCorrectionDirectionCount; ++direction) {
+		std::vector<float> values = GatherAngularWindow(bins, direction);
+		if (values.size() < minimumSamplesPerDirection) {
+			continue;
+		}
+
+		const auto [minimum, maximum] =
+			std::minmax_element(values.begin(), values.end());
+		result.minimumRadius[direction] = *minimum;
+		result.maximumRadius[direction] = *maximum;
+		result.radius[direction] = std::max(
+			Percentile(values, 0.95F),
+			0.001F
+		);
+		result.measured[direction] = true;
+		++result.measuredDirectionCount;
+	}
+
+	FillMissingCircular(result.minimumRadius, result.measured, 1.0F);
+	FillMissingCircular(result.maximumRadius, result.measured, 1.0F);
+	FillMissingCircular(result.radius, result.measured, 1.0F);
+	result.valid =
+		result.measuredDirectionCount >= kCorrectionDirectionCount * 3 / 4;
 }
 
 } // namespace
 
-CenterCalibrationResult CalibrateCenter(const std::vector<Vec2>& samples) {
+CenterCalibrationResult CalibrateCenter(
+	const std::vector<Vec2>& samples,
+	std::size_t minimumSamplesPerDirection
+) {
 	CenterCalibrationResult result;
 	result.sampleCount = samples.size();
 	if (samples.size() < 8) {
@@ -118,15 +224,29 @@ CenterCalibrationResult CalibrateCenter(const std::vector<Vec2>& samples) {
 	result.center = {Median(xs), Median(ys)};
 	std::vector<float> radii;
 	radii.reserve(xs.size());
+	std::array<std::vector<float>, kCorrectionDirectionCount> bins;
 	for (const Vec2 sample : samples) {
 		if (!std::isfinite(sample.x) || !std::isfinite(sample.y)) {
 			continue;
 		}
-		radii.push_back(Radius({sample.x - result.center.x, sample.y - result.center.y}));
+		const Vec2 centered{
+			sample.x - result.center.x,
+			sample.y - result.center.y,
+		};
+		const float radius = Radius(centered);
+		radii.push_back(radius);
+		if (radius > std::numeric_limits<float>::epsilon()) {
+			bins[DirectionIndex(centered)].push_back(radius);
+		}
 	}
 
-	result.noiseRadiusP99 = Percentile(std::move(radii), 0.99F);
-	result.recommendedDeadzone = std::clamp(result.noiseRadiusP99 * 1.25F, 0.0F, 0.30F);
+	result.noiseRadiusP99 = Percentile(radii, 0.99F);
+	result.recommendedDeadzone = std::clamp(
+		result.noiseRadiusP99 * 1.25F,
+		0.0F,
+		0.30F
+	);
+	AnalyzeInnerDirections(bins, minimumSamplesPerDirection, result);
 	result.valid = true;
 	return result;
 }
@@ -137,8 +257,10 @@ OuterCalibrationResult CalibrateOuterRange(
 	std::size_t minimumSamplesPerDirection
 ) {
 	OuterCalibrationResult result;
+	result.minimumRadius.fill(1.0F);
+	result.maximumRadius.fill(1.0F);
 	result.radius.fill(1.0F);
-	std::array<std::vector<float>, kOuterDirectionCount> bins;
+	std::array<std::vector<float>, kCorrectionDirectionCount> bins;
 
 	for (const Vec2 sample : samples) {
 		if (!std::isfinite(sample.x) || !std::isfinite(sample.y)) {
@@ -152,17 +274,7 @@ OuterCalibrationResult CalibrateOuterRange(
 		bins[DirectionIndex(centered)].push_back(radius);
 	}
 
-	for (std::size_t index = 0; index < kOuterDirectionCount; ++index) {
-		if (bins[index].size() < minimumSamplesPerDirection) {
-			continue;
-		}
-		result.radius[index] = std::max(Percentile(bins[index], 0.95F), 0.001F);
-		result.measured[index] = true;
-		++result.measuredDirectionCount;
-	}
-
-	FillMissingDirections(result);
-	result.valid = result.measuredDirectionCount >= kOuterDirectionCount * 3 / 4;
+	AnalyzeOuterDirections(bins, minimumSamplesPerDirection, result);
 	return result;
 }
 
@@ -174,10 +286,17 @@ CorrectionSettings BuildCorrectionSettings(
 	settings.enabled = false;
 	if (center.valid) {
 		settings.center = center.center;
-		settings.innerDeadzone = center.recommendedDeadzone;
+		settings.innerDeadzone = 0.0F;
+		settings.innerRadius = center.innerRadius;
 	}
 	if (outer.measuredDirectionCount > 0) {
 		settings.outerRadius = outer.radius;
+	}
+	for (std::size_t direction = 0; direction < kCorrectionDirectionCount; ++direction) {
+		settings.outerRadius[direction] = std::max(
+			settings.outerRadius[direction],
+			settings.innerRadius[direction] + 0.05F
+		);
 	}
 	return settings;
 }
