@@ -682,17 +682,17 @@ struct GuiState {
 		components.resize(componentCount);
 		latestComponentSamples.resize(componentCount);
 		componentHasSample.resize(componentCount, false);
-		while (configuredComponentCount < componentCount) {
+		for (std::uint32_t index = 0; index < componentCount; ++index) {
 			qss::ScalarComponentSnapshot component;
-			if (!reader.ReadComponent(configuredComponentCount, component)) {
-				break;
+			if (!reader.ReadComponent(index, component)) {
+				continue;
 			}
-			live.ConfigureComponent(configuredComponentCount, component);
-			components[configuredComponentCount] = component;
-			++configuredComponentCount;
+			live.ConfigureComponent(index, component);
+			components[index] = component;
 		}
-		if (recordingActive && activeRecording.components.size() != componentCount) {
-			CaptureComponents(activeRecording);
+		configuredComponentCount = componentCount;
+		if (recordingActive) {
+			activeRecording.components = components;
 		}
 
 		std::array<qss::SharedScalarSample, 256> samples{};

@@ -47,6 +47,25 @@ TEST(LiveStateTests, UnknownComponentsAreNotGuessed) {
 	EXPECT_FALSE(state.GetRight().y.available);
 }
 
+TEST(LiveStateTests, ReclassifiesAnExistingComponent) {
+	qss::SteamVRLiveState state;
+	state.ConfigureComponent(
+		0,
+		MakeComponent(qss::ControllerHand::Unknown, qss::ScalarSemantic::Unknown)
+	);
+	state.ConsumeSample({100, 1, 0, 0.5F, 0.5F, 0.0, 0});
+	EXPECT_FALSE(state.GetRight().x.available);
+
+	state.ConfigureComponent(
+		0,
+		MakeComponent(qss::ControllerHand::Right, qss::ScalarSemantic::JoystickX)
+	);
+	state.ConsumeSample({101, 2, 0, 0.75F, 0.75F, 0.0, 0});
+
+	EXPECT_TRUE(state.GetRight().x.available);
+	EXPECT_FLOAT_EQ(state.GetRight().x.rawValue, 0.75F);
+}
+
 TEST(LiveStateTests, CountsSequenceGaps) {
 	qss::SteamVRLiveState state;
 	state.ConsumeSample({100, 10, 0, 0.0F, 0.0F, 0.0, 0});

@@ -13,6 +13,7 @@
 #include <cstdio>
 #include <cstring>
 #include <limits>
+#include <mutex>
 
 namespace qss {
 namespace {
@@ -37,9 +38,9 @@ using UpdateScalarComponentFn = vr::EVRInputError(*)(
 
 struct ComponentBinding {
 	std::atomic<std::uint64_t> handle{0};
-	std::uint32_t sharedIndex = 0;
-	ControllerHand hand = ControllerHand::Unknown;
-	ScalarSemantic semantic = ScalarSemantic::Unknown;
+	std::atomic<std::uint32_t> sharedIndex{0};
+	std::atomic<std::uint32_t> hand{static_cast<std::uint32_t>(ControllerHand::Unknown)};
+	std::atomic<std::uint32_t> semantic{static_cast<std::uint32_t>(ScalarSemantic::Unknown)};
 };
 
 struct ComponentBindingSnapshot {
@@ -54,6 +55,7 @@ struct RawStickState {
 };
 
 std::array<ComponentBinding, kSteamVRMaxScalarComponents> g_componentBindings{};
+std::mutex g_bindingMutationMutex;
 RawStickState g_leftRaw{};
 RawStickState g_rightRaw{};
 SteamVRSharedMemoryWriter* g_sharedMemory = nullptr;
@@ -66,9 +68,15 @@ bool g_hooksInstalled = false;
 
 void ClearBindings() noexcept {
 	for (ComponentBinding& binding : g_componentBindings) {
-		binding.sharedIndex = 0;
-		binding.hand = ControllerHand::Unknown;
-		binding.semantic = ScalarSemantic::Unknown;
+		binding.sharedIndex.store(0, std::memory_order_relaxed);
+		binding.hand.store(
+			static_cast<std::uint32_t>(ControllerHand::Unknown),
+			std::memory_order_relaxed
+		);
+		binding.semantic.store(
+			static_cast<std::uint32_t>(ScalarSemantic::Unknown),
+			std::memory_order_relaxed
+		);
 		binding.handle.store(0, std::memory_order_relaxed);
 	}
 }
@@ -80,16 +88,16 @@ bool AddBinding(
 	ScalarSemantic semantic
 ) noexcept {
 	for (ComponentBinding& binding : g_componentBindings) {
-		std::uint64_t expected = 0;
-		if (binding.handle.compare_exchange_strong(
-			expected,
-			std::numeric_limits<std::uint64_t>::max(),
-			std::memory_order_acq_rel,
-			std::memory_order_relaxed
-		)) {
-			binding.sharedIndex = sharedIndex;
-			binding.hand = hand;
-			binding.semantic = semantic;
+		if (binding.handle.load(std::memory_order_acquire) == 0) {
+			binding.sharedIndex.store(sharedIndex, std::memory_order_relaxed);
+			binding.hand.store(
+				static_cast<std::uint32_t>(hand),
+				std::memory_order_relaxed
+			);
+			binding.semantic.store(
+				static_cast<std::uint32_t>(semantic),
+				std::memory_order_relaxed
+			);
 			binding.handle.store(handle, std::memory_order_release);
 			return true;
 		}
@@ -100,9 +108,13 @@ bool AddBinding(
 bool FindBinding(std::uint64_t handle, ComponentBindingSnapshot& output) noexcept {
 	for (const ComponentBinding& binding : g_componentBindings) {
 		if (binding.handle.load(std::memory_order_acquire) == handle) {
-			output.sharedIndex = binding.sharedIndex;
-			output.hand = binding.hand;
-			output.semantic = binding.semantic;
+			output.sharedIndex = binding.sharedIndex.load(std::memory_order_relaxed);
+			output.hand = static_cast<ControllerHand>(
+				binding.hand.load(std::memory_order_relaxed)
+			);
+			output.semantic = static_cast<ScalarSemantic>(
+				binding.semantic.load(std::memory_order_relaxed)
+			);
 			return true;
 		}
 	}
@@ -118,6 +130,11 @@ bool FindOrRegisterUnknownBinding(
 	}
 	if (g_sharedMemory == nullptr) {
 		return false;
+	}
+
+	std::lock_guard<std::mutex> lock(g_bindingMutationMutex);
+	if (FindBinding(handle, output)) {
+		return true;
 	}
 
 	char path[kSteamVRComponentPathCapacity]{};
@@ -267,6 +284,49 @@ ScalarSemantic DetectSemantic(const char* path) noexcept {
 	return ScalarSemantic::Unknown;
 }
 
+bool UpgradeBinding(
+	std::uint64_t handle,
+	std::uint64_t container,
+	const char* path,
+	std::int32_t scalarType,
+	std::int32_t scalarUnits,
+	ControllerHand hand,
+	ScalarSemantic semantic
+) noexcept {
+	ComponentBindingSnapshot existing;
+	if (!FindBinding(handle, existing)) {
+		return false;
+	}
+
+	if (!g_sharedMemory->UpdateScalarComponent(
+		existing.sharedIndex,
+		handle,
+		container,
+		path,
+		scalarType,
+		scalarUnits,
+		hand,
+		semantic
+	)) {
+		return false;
+	}
+
+	for (ComponentBinding& binding : g_componentBindings) {
+		if (binding.handle.load(std::memory_order_acquire) == handle) {
+			binding.hand.store(
+				static_cast<std::uint32_t>(hand),
+				std::memory_order_release
+			);
+			binding.semantic.store(
+				static_cast<std::uint32_t>(semantic),
+				std::memory_order_release
+			);
+			return true;
+		}
+	}
+	return false;
+}
+
 vr::EVRInputError HookCreateScalarComponent(
 	vr::IVRDriverInput* self,
 	vr::PropertyContainerHandle_t container,
@@ -290,6 +350,21 @@ vr::EVRInputError HookCreateScalarComponent(
 
 	const ControllerHand hand = DetectHand(container);
 	const ScalarSemantic semantic = DetectSemantic(path);
+	const std::uint64_t numericHandle = static_cast<std::uint64_t>(*handle);
+
+	std::lock_guard<std::mutex> lock(g_bindingMutationMutex);
+	if (UpgradeBinding(
+		numericHandle,
+		static_cast<std::uint64_t>(container),
+		path,
+		static_cast<std::int32_t>(scalarType),
+		static_cast<std::int32_t>(scalarUnits),
+		hand,
+		semantic
+	)) {
+		return result;
+	}
+
 	std::uint32_t sharedIndex = 0;
 	if (g_sharedMemory->RegisterScalarComponent(
 		static_cast<std::uint64_t>(*handle),
@@ -301,7 +376,7 @@ vr::EVRInputError HookCreateScalarComponent(
 		semantic,
 		sharedIndex
 	)) {
-		AddBinding(static_cast<std::uint64_t>(*handle), sharedIndex, hand, semantic);
+		AddBinding(numericHandle, sharedIndex, hand, semantic);
 	}
 
 	return result;

@@ -37,6 +37,16 @@ public:
 		ScalarSemantic semantic,
 		std::uint32_t& componentIndex
 	) noexcept;
+	bool UpdateScalarComponent(
+		std::uint32_t componentIndex,
+		std::uint64_t handle,
+		std::uint64_t container,
+		const char* path,
+		std::int32_t scalarType,
+		std::int32_t scalarUnits,
+		ControllerHand hand,
+		ScalarSemantic semantic
+	) noexcept;
 	void WriteScalarSample(const SharedScalarSample& sample) noexcept;
 
 private:

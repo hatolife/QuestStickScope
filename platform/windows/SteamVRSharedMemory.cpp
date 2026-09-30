@@ -43,6 +43,39 @@ bool ReadCorrectionSnapshot(const SteamVRSharedState* state, CorrectionControlSn
 	return true;
 }
 
+bool WriteScalarComponentSnapshot(
+	SharedScalarComponent& component,
+	std::uint64_t handle,
+	std::uint64_t container,
+	const char* path,
+	std::int32_t scalarType,
+	std::int32_t scalarUnits,
+	ControllerHand hand,
+	ScalarSemantic semantic
+) noexcept {
+	if (path == nullptr) {
+		return false;
+	}
+
+	const std::uint64_t previousStamp = component.stamp.load(std::memory_order_acquire);
+	if ((previousStamp & 1ULL) != 0ULL) {
+		return false;
+	}
+	const std::uint64_t beginStamp = previousStamp + 1ULL;
+	component.stamp.store(beginStamp, std::memory_order_release);
+	component.handle = handle;
+	component.container = container;
+	component.scalarType = scalarType;
+	component.scalarUnits = scalarUnits;
+	component.hand = hand;
+	component.semantic = semantic;
+	component.path.fill('\0');
+	const std::size_t pathLength = std::min(std::strlen(path), component.path.size() - 1);
+	std::memcpy(component.path.data(), path, pathLength);
+	component.stamp.store(beginStamp + 1ULL, std::memory_order_release);
+	return true;
+}
+
 bool WriteCorrectionSnapshot(
 	SteamVRSharedState* state,
 	const SharedHandCorrection& left,
@@ -190,21 +223,47 @@ bool SteamVRSharedMemoryWriter::RegisterScalarComponent(
 	}
 
 	SharedScalarComponent& component = m_state->components[index];
-	const std::uint64_t beginStamp = static_cast<std::uint64_t>(index + 1) * 2ULL - 1ULL;
-	component.stamp.store(beginStamp, std::memory_order_release);
-	component.handle = handle;
-	component.container = container;
-	component.scalarType = scalarType;
-	component.scalarUnits = scalarUnits;
-	component.hand = hand;
-	component.semantic = semantic;
-	component.path.fill('\0');
-	const std::size_t pathLength = std::min(std::strlen(path), component.path.size() - 1);
-	std::memcpy(component.path.data(), path, pathLength);
-	component.stamp.store(beginStamp + 1ULL, std::memory_order_release);
+	if (!WriteScalarComponentSnapshot(
+		component,
+		handle,
+		container,
+		path,
+		scalarType,
+		scalarUnits,
+		hand,
+		semantic
+	)) {
+		return false;
+	}
 
 	componentIndex = index;
 	return true;
+}
+
+bool SteamVRSharedMemoryWriter::UpdateScalarComponent(
+	std::uint32_t componentIndex,
+	std::uint64_t handle,
+	std::uint64_t container,
+	const char* path,
+	std::int32_t scalarType,
+	std::int32_t scalarUnits,
+	ControllerHand hand,
+	ScalarSemantic semantic
+) noexcept {
+	if (m_state == nullptr ||
+		componentIndex >= m_state->componentCount.load(std::memory_order_acquire)) {
+		return false;
+	}
+	return WriteScalarComponentSnapshot(
+		m_state->components[componentIndex],
+		handle,
+		container,
+		path,
+		scalarType,
+		scalarUnits,
+		hand,
+		semantic
+	);
 }
 
 void SteamVRSharedMemoryWriter::WriteScalarSample(const SharedScalarSample& input) noexcept {
