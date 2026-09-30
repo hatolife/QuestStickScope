@@ -194,6 +194,9 @@ enum class CalibrationMode {
 	Outer,
 };
 
+constexpr double kCalibrationWaitSeconds = 5.0;
+constexpr double kCalibrationMeasureSeconds = 10.0;
+
 struct GuiState {
 	qss::SteamVRSharedMemoryReader reader;
 	qss::SteamVRSharedMemoryController controller;
@@ -306,7 +309,7 @@ struct GuiState {
 		calibrationHand = hand;
 		calibrationStartTicks = qss::MonotonicClock::NowTicks();
 		calibrationSamples.clear();
-		calibrationStatus = "Keep the stick released for 3 seconds.";
+		calibrationStatus = "Release the stick. Measurement starts after 5 seconds and runs for 10 seconds.";
 	}
 
 	void StartOuterCalibration(qss::ControllerHand hand) {
@@ -314,7 +317,7 @@ struct GuiState {
 		calibrationHand = hand;
 		calibrationStartTicks = qss::MonotonicClock::NowTicks();
 		calibrationSamples.clear();
-		calibrationStatus = "Hold the stick against the outer edge and rotate it several times.";
+		calibrationStatus = "Prepare to rotate the stick around the outer edge. Measurement starts after 5 seconds and runs for 10 seconds.";
 	}
 
 	void FinalizeCenterCalibration() {
@@ -350,8 +353,25 @@ struct GuiState {
 		calibrationMode = CalibrationMode::None;
 	}
 
+	double GetCalibrationElapsedSeconds() const {
+		if (calibrationMode == CalibrationMode::None) {
+			return 0.0;
+		}
+		const std::int64_t elapsedTicks =
+			qss::MonotonicClock::NowTicks() - calibrationStartTicks;
+		return static_cast<double>(elapsedTicks) /
+			static_cast<double>(qss::MonotonicClock::Frequency());
+	}
+
+	bool IsCalibrationMeasuring() const {
+		const double elapsed = GetCalibrationElapsedSeconds();
+		return elapsed >= kCalibrationWaitSeconds &&
+			elapsed < kCalibrationWaitSeconds + kCalibrationMeasureSeconds;
+	}
+
 	void UpdateCenterCalibration() {
-		if (calibrationMode != CalibrationMode::Center) {
+		if (calibrationMode != CalibrationMode::Center ||
+			!IsCalibrationMeasuring()) {
 			return;
 		}
 		const qss::LiveStickState& stick = calibrationHand == qss::ControllerHand::Left
@@ -360,15 +380,26 @@ struct GuiState {
 		if (stick.x.available && stick.y.available && calibrationSamples.size() < 500000) {
 			calibrationSamples.push_back({stick.x.rawValue, stick.y.rawValue});
 		}
+	}
 
-		const std::int64_t elapsed = qss::MonotonicClock::NowTicks() - calibrationStartTicks;
-		if (elapsed >= qss::MonotonicClock::Frequency() * 3) {
+	void UpdateCalibrationTiming() {
+		if (calibrationMode == CalibrationMode::None) {
+			return;
+		}
+		const double elapsed = GetCalibrationElapsedSeconds();
+		if (elapsed < kCalibrationWaitSeconds + kCalibrationMeasureSeconds) {
+			return;
+		}
+		if (calibrationMode == CalibrationMode::Center) {
 			FinalizeCenterCalibration();
+		} else if (calibrationMode == CalibrationMode::Outer) {
+			FinalizeOuterCalibration();
 		}
 	}
 
 	void CaptureCalibrationSample(const qss::SharedScalarSample& sample) {
 		if (calibrationMode != CalibrationMode::Outer ||
+			!IsCalibrationMeasuring() ||
 			sample.componentIndex >= components.size()) {
 			return;
 		}
@@ -766,6 +797,7 @@ struct GuiState {
 			}
 		}
 		UpdateCenterCalibration();
+		UpdateCalibrationTiming();
 	}
 };
 
@@ -1132,12 +1164,22 @@ void DrawCalibrationView(GuiState& state) {
 	if (state.calibrationMode != CalibrationMode::None) {
 		const char* hand = state.calibrationHand == qss::ControllerHand::Left ? "Left" : "Right";
 		const char* mode = state.calibrationMode == CalibrationMode::Center ? "Center" : "Outer range";
-		ImGui::Text("%s / %s measurement in progress", hand, mode);
+		const double elapsed = state.GetCalibrationElapsedSeconds();
+		ImGui::Text("%s / %s calibration", hand, mode);
+		if (elapsed < kCalibrationWaitSeconds) {
+			ImGui::Text(
+				"Starts in %.1f s",
+				std::max(0.0, kCalibrationWaitSeconds - elapsed)
+			);
+		} else {
+			const double measureElapsed = elapsed - kCalibrationWaitSeconds;
+			ImGui::Text(
+				"Measuring... %.1f s remaining",
+				std::max(0.0, kCalibrationMeasureSeconds - measureElapsed)
+			);
+		}
 		ImGui::Text("Captured samples: %zu", state.calibrationSamples.size());
 		ImGui::TextWrapped("%s", state.calibrationStatus.c_str());
-		if (state.calibrationMode == CalibrationMode::Outer && ImGui::Button("Finish outer measurement")) {
-			state.FinalizeOuterCalibration();
-		}
 		if (ImGui::Button("Cancel measurement")) {
 			state.calibrationMode = CalibrationMode::None;
 			state.calibrationSamples.clear();
