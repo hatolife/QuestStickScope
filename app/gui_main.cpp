@@ -27,6 +27,7 @@
 #include <array>
 #include <cstdint>
 #include <climits>
+#include <cmath>
 #include <cwchar>
 #include <deque>
 #include <filesystem>
@@ -202,6 +203,7 @@ struct GuiState {
 	std::vector<bool> componentHasSample;
 	std::deque<qss::StickPointSample> leftHistory;
 	std::deque<qss::StickPointSample> rightHistory;
+	float historyRetentionSeconds = 30.0F;
 	qss::WindowsMouseObserver windowsMouseObserver;
 	std::deque<qss::WindowsMouseEvent> windowsMouseEvents;
 	qss::WindowsRawInputObserver windowsRawInputObserver;
@@ -410,6 +412,37 @@ struct GuiState {
 		calibrationStatus = "Calibration values copied to correction settings.";
 	}
 
+	void TrimHistory(
+		std::deque<qss::StickPointSample>& history,
+		std::int64_t latestTicks
+	) {
+		const double frequency = static_cast<double>(qss::MonotonicClock::Frequency());
+		const std::int64_t windowTicks = static_cast<std::int64_t>(
+			frequency * static_cast<double>(historyRetentionSeconds)
+		);
+		while (!history.empty() &&
+			latestTicks - history.front().timestampTicks > windowTicks) {
+			history.pop_front();
+		}
+		while (history.size() > 30000) {
+			history.pop_front();
+		}
+	}
+
+	void TrimLiveHistories() {
+		if (!leftHistory.empty()) {
+			TrimHistory(leftHistory, leftHistory.back().timestampTicks);
+		}
+		if (!rightHistory.empty()) {
+			TrimHistory(rightHistory, rightHistory.back().timestampTicks);
+		}
+	}
+
+	void ClearLiveHistories() {
+		leftHistory.clear();
+		rightHistory.clear();
+	}
+
 	void AppendLiveHistory(const qss::SharedScalarSample& sample) {
 		if (sample.componentIndex >= components.size()) {
 			return;
@@ -438,11 +471,7 @@ struct GuiState {
 			{stick->x.rawValue, stick->y.rawValue},
 			{stick->x.outputValue, stick->y.outputValue},
 		});
-		const std::int64_t windowTicks = qss::MonotonicClock::Frequency() * 10;
-		while (!history->empty() &&
-			sample.timestampTicks - history->front().timestampTicks > windowTicks) {
-			history->pop_front();
-		}
+		TrimHistory(*history, sample.timestampTicks);
 	}
 
 	void CaptureComponents(qss::RecordingData& recording) {
@@ -763,23 +792,54 @@ void DrawStickPlot(
 ) {
 	const double x = stick.x.rawValue;
 	const double y = stick.y.rawValue;
-	if (ImPlot::BeginPlot(label, ImVec2(-1.0F, 260.0F), ImPlotFlags_Equal)) {
-		ImPlot::SetupAxes(nullptr, nullptr, ImPlotAxisFlags_NoTickLabels, ImPlotAxisFlags_NoTickLabels);
+	const float availableWidth = ImGui::GetContentRegionAvail().x;
+	const float plotSize = std::min(availableWidth, 380.0F);
+	if (availableWidth > plotSize) {
+		ImGui::SetCursorPosX(
+			ImGui::GetCursorPosX() + (availableWidth - plotSize) * 0.5F
+		);
+	}
+
+	if (ImPlot::BeginPlot(label, ImVec2(plotSize, plotSize), ImPlotFlags_Equal)) {
+		ImPlot::SetupAxes(
+			nullptr,
+			nullptr,
+			ImPlotAxisFlags_NoTickLabels | ImPlotAxisFlags_Lock,
+			ImPlotAxisFlags_NoTickLabels | ImPlotAxisFlags_Lock
+		);
 		ImPlot::SetupAxesLimits(-1.1, 1.1, -1.1, 1.1, ImGuiCond_Always);
 
-		const double circleX[] = {-1.0, -0.7071, 0.0, 0.7071, 1.0, 0.7071, 0.0, -0.7071, -1.0};
-		const double circleY[] = {0.0, 0.7071, 1.0, 0.7071, 0.0, -0.7071, -1.0, -0.7071, 0.0};
-		ImPlot::PlotLine("Unit circle", circleX, circleY, 9);
+		constexpr std::size_t circlePointCount = 129;
+		constexpr double pi = 3.14159265358979323846;
+		std::array<double, circlePointCount> circleX{};
+		std::array<double, circlePointCount> circleY{};
+		for (std::size_t index = 0; index < circlePointCount; ++index) {
+			const double angle =
+				2.0 * pi * static_cast<double>(index) /
+				static_cast<double>(circlePointCount - 1);
+			circleX[index] = std::cos(angle);
+			circleY[index] = std::sin(angle);
+		}
+		ImPlot::PlotLine(
+			"Unit circle",
+			circleX.data(),
+			circleY.data(),
+			static_cast<int>(circlePointCount)
+		);
+
 		if (history != nullptr && history->size() >= 2) {
-			const std::size_t trailCount = std::min<std::size_t>(history->size(), 500);
-			std::vector<double> trailX(trailCount);
-			std::vector<double> trailY(trailCount);
-			const std::size_t first = history->size() - trailCount;
-			for (std::size_t index = 0; index < trailCount; ++index) {
-				trailX[index] = (*history)[first + index].raw.x;
-				trailY[index] = (*history)[first + index].raw.y;
+			std::vector<double> trailX(history->size());
+			std::vector<double> trailY(history->size());
+			for (std::size_t index = 0; index < history->size(); ++index) {
+				trailX[index] = (*history)[index].raw.x;
+				trailY[index] = (*history)[index].raw.y;
 			}
-			ImPlot::PlotLine("Raw trail", trailX.data(), trailY.data(), static_cast<int>(trailCount));
+			ImPlot::PlotLine(
+				"Raw trail",
+				trailX.data(),
+				trailY.data(),
+				static_cast<int>(history->size())
+			);
 		}
 		if (stick.x.available && stick.y.available) {
 			ImPlot::PlotScatter("Current", &x, &y, 1);
@@ -796,7 +856,8 @@ void DrawStickPlot(
 
 void DrawHistoryStatistics(
 	const char* plotId,
-	const std::deque<qss::StickPointSample>& history
+	const std::deque<qss::StickPointSample>& history,
+	float retentionSeconds
 ) {
 	if (history.empty()) {
 		ImGui::TextDisabled("No time-series samples yet.");
@@ -825,7 +886,12 @@ void DrawHistoryStatistics(
 
 	if (ImPlot::BeginPlot(plotId, ImVec2(-1.0F, 220.0F))) {
 		ImPlot::SetupAxes("Seconds", "Value");
-		ImPlot::SetupAxisLimits(ImAxis_X1, -10.0, 0.0, ImGuiCond_Always);
+		ImPlot::SetupAxisLimits(
+			ImAxis_X1,
+			-static_cast<double>(retentionSeconds),
+			0.0,
+			ImGuiCond_Always
+		);
 		ImPlot::SetupAxisLimits(ImAxis_Y1, -1.1, 1.1, ImGuiCond_Always);
 		ImPlot::PlotLine("Raw X", times.data(), rawX.data(), static_cast<int>(times.size()));
 		ImPlot::PlotLine("Raw Y", times.data(), rawY.data(), static_cast<int>(times.size()));
@@ -928,9 +994,30 @@ void DrawLiveView(GuiState& state) {
 	const qss::LiveStickState& left = state.live.GetLeft();
 	const qss::LiveStickState& right = state.live.GetRight();
 
+	ImGui::SetNextItemWidth(220.0F);
+	if (ImGui::SliderFloat(
+		"Trail retention",
+		&state.historyRetentionSeconds,
+		1.0F,
+		120.0F,
+		"%.0f s"
+	)) {
+		state.TrimLiveHistories();
+	}
+	ImGui::SameLine();
+	if (ImGui::Button("Clear trails")) {
+		state.ClearLiveHistories();
+	}
+	ImGui::SameLine();
+	ImGui::TextDisabled(
+		"%zu left / %zu right samples",
+		state.leftHistory.size(),
+		state.rightHistory.size()
+	);
+
 	const float availableWidth = ImGui::GetContentRegionAvail().x;
 	const float columnWidth = std::max(320.0F, (availableWidth - 12.0F) * 0.5F);
-	ImGui::BeginChild("LeftStick", ImVec2(columnWidth, 500.0F), ImGuiChildFlags_Borders);
+	ImGui::BeginChild("LeftStick", ImVec2(columnWidth, 620.0F), ImGuiChildFlags_Borders);
 	ImGui::SeparatorText("Left Stick");
 	DrawStickPlot("##LeftXY", left, &state.leftHistory);
 	ImGui::PushID("LeftCorrection");
@@ -940,7 +1027,7 @@ void DrawLiveView(GuiState& state) {
 	ImGui::PopID();
 	ImGui::EndChild();
 	ImGui::SameLine();
-	ImGui::BeginChild("RightStick", ImVec2(0.0F, 500.0F), ImGuiChildFlags_Borders);
+	ImGui::BeginChild("RightStick", ImVec2(0.0F, 620.0F), ImGuiChildFlags_Borders);
 	ImGui::SeparatorText("Right Stick");
 	DrawStickPlot("##RightXY", right, &state.rightHistory);
 	ImGui::PushID("RightCorrection");
@@ -954,11 +1041,19 @@ void DrawLiveView(GuiState& state) {
 	ImGui::SeparatorText("Time / Statistics");
 	ImGui::PushID("LeftHistory");
 	ImGui::TextUnformatted("Left Stick");
-	DrawHistoryStatistics("##LeftTime", state.leftHistory);
+	DrawHistoryStatistics(
+		"##LeftTime",
+		state.leftHistory,
+		state.historyRetentionSeconds
+	);
 	ImGui::PopID();
 	ImGui::PushID("RightHistory");
 	ImGui::TextUnformatted("Right Stick");
-	DrawHistoryStatistics("##RightTime", state.rightHistory);
+	DrawHistoryStatistics(
+		"##RightTime",
+		state.rightHistory,
+		state.historyRetentionSeconds
+	);
 	ImGui::PopID();
 }
 
