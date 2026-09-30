@@ -204,6 +204,10 @@ struct GuiState {
 	std::deque<qss::StickPointSample> leftHistory;
 	std::deque<qss::StickPointSample> rightHistory;
 	float historyRetentionSeconds = 30.0F;
+	bool leftHistoryXUpdated = false;
+	bool leftHistoryYUpdated = false;
+	bool rightHistoryXUpdated = false;
+	bool rightHistoryYUpdated = false;
 	qss::WindowsMouseObserver windowsMouseObserver;
 	std::deque<qss::WindowsMouseEvent> windowsMouseEvents;
 	qss::WindowsRawInputObserver windowsRawInputObserver;
@@ -441,6 +445,10 @@ struct GuiState {
 	void ClearLiveHistories() {
 		leftHistory.clear();
 		rightHistory.clear();
+		leftHistoryXUpdated = false;
+		leftHistoryYUpdated = false;
+		rightHistoryXUpdated = false;
+		rightHistoryYUpdated = false;
 	}
 
 	void AppendLiveHistory(const qss::SharedScalarSample& sample) {
@@ -448,20 +456,33 @@ struct GuiState {
 			return;
 		}
 		const qss::ScalarComponentSnapshot& component = components[sample.componentIndex];
-		if (component.semantic != qss::ScalarSemantic::JoystickY) {
-			return;
-		}
 
 		const qss::LiveStickState* stick = nullptr;
 		std::deque<qss::StickPointSample>* history = nullptr;
+		bool* xUpdated = nullptr;
+		bool* yUpdated = nullptr;
 		if (component.hand == qss::ControllerHand::Left) {
 			stick = &live.GetLeft();
 			history = &leftHistory;
+			xUpdated = &leftHistoryXUpdated;
+			yUpdated = &leftHistoryYUpdated;
 		} else if (component.hand == qss::ControllerHand::Right) {
 			stick = &live.GetRight();
 			history = &rightHistory;
+			xUpdated = &rightHistoryXUpdated;
+			yUpdated = &rightHistoryYUpdated;
+		} else {
+			return;
 		}
-		if (stick == nullptr || history == nullptr ||
+
+		if (component.semantic == qss::ScalarSemantic::JoystickX) {
+			*xUpdated = true;
+		} else if (component.semantic == qss::ScalarSemantic::JoystickY) {
+			*yUpdated = true;
+		} else {
+			return;
+		}
+		if (!*xUpdated || !*yUpdated ||
 			!stick->x.available || !stick->y.available) {
 			return;
 		}
@@ -471,6 +492,8 @@ struct GuiState {
 			{stick->x.rawValue, stick->y.rawValue},
 			{stick->x.outputValue, stick->y.outputValue},
 		});
+		*xUpdated = false;
+		*yUpdated = false;
 		TrimHistory(*history, sample.timestampTicks);
 	}
 
@@ -608,8 +631,7 @@ struct GuiState {
 		components.clear();
 		latestComponentSamples.clear();
 		componentHasSample.clear();
-		leftHistory.clear();
-		rightHistory.clear();
+		ClearLiveHistories();
 		correctionLoaded = false;
 		correctionDirty = false;
 	}
