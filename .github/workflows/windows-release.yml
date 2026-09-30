@@ -52,7 +52,8 @@ jobs:
         run: |
           $files = @(
             "tools/Register-SteamVRDriver.ps1",
-            "tools/Unregister-SteamVRDriver.ps1"
+            "tools/Unregister-SteamVRDriver.ps1",
+            "tools/Diagnose-SteamVRDriver.ps1"
           )
           foreach ($file in $files) {
             $tokens = $null
@@ -110,6 +111,7 @@ jobs:
           Copy-Item "tools" $root -Recurse
           Copy-Item "tools/Register-SteamVRDriver.ps1" $root
           Copy-Item "tools/Unregister-SteamVRDriver.ps1" $root
+          Copy-Item "tools/Diagnose-SteamVRDriver.ps1" $root
           Copy-Item "README.md" $root
           Copy-Item "PLAN.md" $root
 

@@ -180,3 +180,14 @@ QuestStickScope-<tag>-windows-amd64.zip
 ```
 
 ZIP には GUI、CLI、SteamVR driver、`openvr_api.dll`、登録/解除スクリプト、README、PLAN を含めます。
+
+
+## SteamVR Probe diagnostics
+
+If `SteamVR S0: Offline` remains after registration and a complete SteamVR restart, run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\Diagnose-SteamVRDriver.ps1
+```
+
+The script checks the manifest, packaged DLLs, `vrpathreg` registration, Windows DLL loading, the `HmdDriverFactory` export, whether the driver module is loaded into `vrserver.exe`, and relevant lines from `vrserver.txt`.
