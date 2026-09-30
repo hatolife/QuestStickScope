@@ -169,6 +169,9 @@ if(QSS_BUILD_PROBES AND WIN32)
 		COMMAND ${CMAKE_COMMAND} -E copy_if_different
 			"${CMAKE_CURRENT_SOURCE_DIR}/probes/steamvr/driver/driver.vrdrivermanifest"
 			"${QSS_STEAMVR_DRIVER_ROOT}/driver.vrdrivermanifest"
+		COMMAND ${CMAKE_COMMAND} -E copy_if_different
+			"${openvr_SOURCE_DIR}/bin/win64/openvr_api.dll"
+			"${QSS_STEAMVR_DRIVER_ROOT}/bin/win64/openvr_api.dll"
 	)
 endif()
 

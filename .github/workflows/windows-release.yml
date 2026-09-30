@@ -1,0 +1,128 @@
+name: Windows CI and Release
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: windows-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-test-release:
+    runs-on: windows-2022
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compute release tag
+        shell: pwsh
+        run: |
+          $commitTime = [DateTimeOffset]::Parse((git show -s --format=%cI HEAD))
+          $jst = $commitTime.ToOffset([TimeSpan]::FromHours(9))
+          $timestamp = $jst.ToString("yyyyMMddHHmmss")
+          $shortHash = (git rev-parse --short=7 HEAD).Trim()
+          $tag = "v0.0.1.$timestamp.$shortHash"
+          "QSS_TAG=$tag" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "QSS_SHORT_HASH=$shortHash" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "Release tag: $tag"
+
+      - name: Configure, build and test
+        shell: pwsh
+        run: |
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = (& $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath).Trim()
+          if (-not $vs) {
+            throw "Visual Studio with MSVC was not found."
+          }
+          $devcmd = Join-Path $vs "Common7\Tools\VsDevCmd.bat"
+          $command = '"{0}" -arch=amd64 -host_arch=amd64 && cmake --preset windows-release && cmake --build --preset windows-release && ctest --preset windows-release' -f $devcmd
+          cmd.exe /d /s /c $command
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+
+      - name: Verify release files
+        shell: pwsh
+        run: |
+          $required = @(
+            "build/windows-release/QuestStickScope.exe",
+            "build/windows-release/QuestStickScopeCli.exe",
+            "build/windows-release/steamvr-driver/queststickscope/driver.vrdrivermanifest",
+            "build/windows-release/steamvr-driver/queststickscope/bin/win64/driver_queststickscope.dll",
+            "build/windows-release/steamvr-driver/queststickscope/bin/win64/openvr_api.dll"
+          )
+          foreach ($path in $required) {
+            if (-not (Test-Path $path)) {
+              throw "Required release file is missing: $path"
+            }
+          }
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $root = Join-Path $PWD "out/release/QuestStickScope"
+          New-Item -ItemType Directory -Force -Path $root | Out-Null
+          Copy-Item "build/windows-release/QuestStickScope.exe" $root
+          Copy-Item "build/windows-release/QuestStickScopeCli.exe" $root
+          Copy-Item "build/windows-release/steamvr-driver" $root -Recurse
+          Copy-Item "tools" $root -Recurse
+          Copy-Item "README.md" $root
+          Copy-Item "PLAN.md" $root
+
+          $zip = "QuestStickScope-$env:QSS_TAG-windows-amd64.zip"
+          Compress-Archive -Path "$root/*" -DestinationPath $zip -CompressionLevel Optimal
+          "QSS_ZIP=$zip" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Upload CI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: QuestStickScope-${{ env.QSS_TAG }}-windows-amd64
+          path: ${{ env.QSS_ZIP }}
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Create tag
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git fetch --tags --force
+          $remoteTag = (git ls-remote --tags origin "refs/tags/$env:QSS_TAG").Trim()
+          if (-not $remoteTag) {
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag -a $env:QSS_TAG -m "QuestStickScope $env:QSS_TAG" HEAD
+            git push origin "refs/tags/$env:QSS_TAG"
+          } else {
+            Write-Host "Tag already exists: $env:QSS_TAG"
+          }
+
+      - name: Create or update GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $title = "QuestStickScope $env:QSS_TAG"
+          $notes = @"
+          Automated Windows amd64 build.
+
+          Commit: $env:GITHUB_SHA
+          Tag: $env:QSS_TAG
+          "@
+
+          gh release view $env:QSS_TAG --repo $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $env:QSS_TAG $env:QSS_ZIP --repo $env:GITHUB_REPOSITORY --clobber
+          } else {
+            gh release create $env:QSS_TAG $env:QSS_ZIP --repo $env:GITHUB_REPOSITORY --title $title --notes $notes
+          }

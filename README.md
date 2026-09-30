@@ -138,3 +138,28 @@ Virtual Desktop の仮想デスクトップ側は、SteamVRなしでも Diagnost
 QuestStickScope は汎用VR入力ツールを目指しません。
 
 未観測区間を推測値で埋めず、直接観測できる境界を増やしながら原因の切り分けと補正を進めます。
+
+
+## CI / Release
+
+`main` への push または GitHub Actions の手動実行で Windows Release ビルドとテストを行います。
+
+成功した場合だけ、対象コミットへ次の形式でタグを作成して GitHub Release を公開します。
+
+```text
+v0.0.1.<JSTコミット時刻 yyyyMMddHHmmss>.<7桁コミットハッシュ>
+```
+
+例:
+
+```text
+v0.0.1.20260930223015.1a2b3c4
+```
+
+Release には次の ZIP を添付します。
+
+```text
+QuestStickScope-<tag>-windows-amd64.zip
+```
+
+ZIP には GUI、CLI、SteamVR driver、`openvr_api.dll`、登録/解除スクリプト、README、PLAN を含めます。
