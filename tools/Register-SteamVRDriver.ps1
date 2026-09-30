@@ -26,7 +26,7 @@ function Resolve-DriverRoot {
 		}
 	}
 
-	throw "QuestStickScope SteamVR driver が見つかりません。Release ZIPを展開した状態で実行するか、-BuildDir を指定してください。"
+	throw "QuestStickScope SteamVR driver was not found. Extract the release ZIP first, or specify -BuildDir."
 }
 
 function Resolve-SteamVRRoot {
@@ -34,7 +34,7 @@ function Resolve-SteamVRRoot {
 		if (Test-Path (Join-Path $SteamVRDir "bin\win64\vrpathreg.exe")) {
 			return (Resolve-Path $SteamVRDir).Path
 		}
-		throw "指定されたSteamVRDirに vrpathreg.exe が見つかりません: $SteamVRDir"
+		throw "vrpathreg.exe was not found under the specified -SteamVRDir: $SteamVRDir"
 	}
 
 	$registryKeys = @(
@@ -56,7 +56,7 @@ function Resolve-SteamVRRoot {
 		return (Resolve-Path $default).Path
 	}
 
-	throw "SteamVR が見つかりません。-SteamVRDir でSteamVRのインストール先を指定してください。"
+	throw "SteamVR was not found. Specify the SteamVR installation directory with -SteamVRDir."
 }
 
 $driverRoot = Resolve-DriverRoot
@@ -68,20 +68,20 @@ Write-Host "SteamVR: $steamVRRoot"
 
 & $vrPathReg adddriver $driverRoot
 if ($LASTEXITCODE -ne 0) {
-	throw "vrpathreg.exe adddriver が失敗しました。終了コード: $LASTEXITCODE"
+	throw "vrpathreg.exe adddriver failed with exit code $LASTEXITCODE."
 }
 
 $registered = (& $vrPathReg show | Out-String)
 if ($LASTEXITCODE -ne 0) {
-	throw "vrpathreg.exe show が失敗しました。終了コード: $LASTEXITCODE"
+	throw "vrpathreg.exe show failed with exit code $LASTEXITCODE."
 }
 if ($registered -notmatch [regex]::Escape($driverRoot)) {
-	throw "登録後の確認に失敗しました。vrpathreg.exe show にQuestStickScopeのdriver pathがありません。"
+	throw "Driver registration verification failed. QuestStickScope is not listed by vrpathreg.exe show."
 }
 
 Write-Host "QuestStickScope SteamVR driver registered."
 if (Get-Process -Name vrserver -ErrorAction SilentlyContinue) {
-	Write-Warning "SteamVR は現在起動中です。QuestStickScope ProbeをロードするにはSteamVRを完全終了してから再起動してください。"
+	Write-Warning "SteamVR is running. Fully exit SteamVR and start it again so the QuestStickScope Probe can be loaded."
 } else {
-	Write-Host "次にSteamVRを起動してください。"
+	Write-Host "Start SteamVR next."
 }

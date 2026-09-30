@@ -26,7 +26,7 @@ function Resolve-DriverRoot {
 		}
 	}
 
-	throw "QuestStickScope SteamVR driver が見つかりません。Release ZIPを展開した状態で実行するか、-BuildDir を指定してください。"
+	throw "QuestStickScope SteamVR driver was not found. Extract the release ZIP first, or specify -BuildDir."
 }
 
 function Resolve-SteamVRRoot {
@@ -34,7 +34,7 @@ function Resolve-SteamVRRoot {
 		if (Test-Path (Join-Path $SteamVRDir "bin\win64\vrpathreg.exe")) {
 			return (Resolve-Path $SteamVRDir).Path
 		}
-		throw "指定されたSteamVRDirに vrpathreg.exe が見つかりません: $SteamVRDir"
+		throw "vrpathreg.exe was not found under the specified -SteamVRDir: $SteamVRDir"
 	}
 
 	$registryKeys = @(
@@ -56,7 +56,7 @@ function Resolve-SteamVRRoot {
 		return (Resolve-Path $default).Path
 	}
 
-	throw "SteamVR が見つかりません。-SteamVRDir でSteamVRのインストール先を指定してください。"
+	throw "SteamVR was not found. Specify the SteamVR installation directory with -SteamVRDir."
 }
 
 $driverRoot = Resolve-DriverRoot
@@ -68,18 +68,18 @@ Write-Host "SteamVR: $steamVRRoot"
 
 & $vrPathReg removedriver $driverRoot
 if ($LASTEXITCODE -ne 0) {
-	throw "vrpathreg.exe removedriver が失敗しました。終了コード: $LASTEXITCODE"
+	throw "vrpathreg.exe removedriver failed with exit code $LASTEXITCODE."
 }
 
 $registered = (& $vrPathReg show | Out-String)
 if ($LASTEXITCODE -ne 0) {
-	throw "vrpathreg.exe show が失敗しました。終了コード: $LASTEXITCODE"
+	throw "vrpathreg.exe show failed with exit code $LASTEXITCODE."
 }
 if ($registered -match [regex]::Escape($driverRoot)) {
-	throw "登録解除後の確認に失敗しました。vrpathreg.exe show にQuestStickScopeのdriver pathが残っています。"
+	throw "Driver removal verification failed. QuestStickScope is still listed by vrpathreg.exe show."
 }
 
 Write-Host "QuestStickScope SteamVR driver unregistered."
 if (Get-Process -Name vrserver -ErrorAction SilentlyContinue) {
-	Write-Warning "SteamVR は現在起動中です。完全に反映するにはSteamVRを再起動してください。"
+	Write-Warning "SteamVR is running. Fully exit SteamVR and start it again to apply the removal."
 }
