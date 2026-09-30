@@ -108,7 +108,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           git fetch --tags --force
-          $remoteTag = (git ls-remote --tags origin "refs/tags/$env:QSS_TAG").Trim()
+          $remoteTag = git ls-remote --tags origin "refs/tags/$env:QSS_TAG"
           if (-not $remoteTag) {
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
