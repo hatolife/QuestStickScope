@@ -1191,6 +1191,94 @@ void DrawCalibrationRangePlot(
 	}
 }
 
+void DrawCalibrationDirectionTable(
+	const qss::CenterCalibrationResult& center,
+	const qss::OuterCalibrationResult& outer
+) {
+	if (!center.valid && outer.measuredDirectionCount == 0) {
+		return;
+	}
+	if (!ImGui::TreeNode("Directional range table (1 degree x 360)")) {
+		return;
+	}
+
+	const ImGuiTableFlags flags =
+		ImGuiTableFlags_Borders |
+		ImGuiTableFlags_RowBg |
+		ImGuiTableFlags_ScrollY |
+		ImGuiTableFlags_ScrollX;
+	if (ImGui::BeginTable("DirectionalRanges", 9, flags, ImVec2(0.0F, 300.0F))) {
+		ImGui::TableSetupColumn("Deg", ImGuiTableColumnFlags_WidthFixed, 45.0F);
+		ImGui::TableSetupColumn("Inner min", ImGuiTableColumnFlags_WidthFixed, 80.0F);
+		ImGui::TableSetupColumn("Inner max", ImGuiTableColumnFlags_WidthFixed, 80.0F);
+		ImGui::TableSetupColumn("Inner effective", ImGuiTableColumnFlags_WidthFixed, 100.0F);
+		ImGui::TableSetupColumn("Inner sampled", ImGuiTableColumnFlags_WidthFixed, 90.0F);
+		ImGui::TableSetupColumn("Outer min", ImGuiTableColumnFlags_WidthFixed, 80.0F);
+		ImGui::TableSetupColumn("Outer max", ImGuiTableColumnFlags_WidthFixed, 80.0F);
+		ImGui::TableSetupColumn("Outer effective", ImGuiTableColumnFlags_WidthFixed, 100.0F);
+		ImGui::TableSetupColumn("Outer sampled", ImGuiTableColumnFlags_WidthFixed, 90.0F);
+		ImGui::TableHeadersRow();
+
+		for (std::size_t direction = 0;
+			direction < qss::kCorrectionDirectionCount;
+			++direction) {
+			ImGui::TableNextRow();
+			ImGui::TableSetColumnIndex(0);
+			ImGui::Text("%zu", direction);
+
+			ImGui::TableSetColumnIndex(1);
+			if (center.valid) {
+				ImGui::Text("%.5f", center.minimumRadius[direction]);
+			} else {
+				ImGui::TextDisabled("-");
+			}
+			ImGui::TableSetColumnIndex(2);
+			if (center.valid) {
+				ImGui::Text("%.5f", center.maximumRadius[direction]);
+			} else {
+				ImGui::TextDisabled("-");
+			}
+			ImGui::TableSetColumnIndex(3);
+			if (center.valid) {
+				ImGui::Text("%.5f", center.innerRadius[direction]);
+			} else {
+				ImGui::TextDisabled("-");
+			}
+			ImGui::TableSetColumnIndex(4);
+			ImGui::TextUnformatted(
+				center.valid && center.measured[direction] ? "Yes" : "No"
+			);
+
+			ImGui::TableSetColumnIndex(5);
+			if (outer.measuredDirectionCount > 0) {
+				ImGui::Text("%.5f", outer.minimumRadius[direction]);
+			} else {
+				ImGui::TextDisabled("-");
+			}
+			ImGui::TableSetColumnIndex(6);
+			if (outer.measuredDirectionCount > 0) {
+				ImGui::Text("%.5f", outer.maximumRadius[direction]);
+			} else {
+				ImGui::TextDisabled("-");
+			}
+			ImGui::TableSetColumnIndex(7);
+			if (outer.measuredDirectionCount > 0) {
+				ImGui::Text("%.5f", outer.radius[direction]);
+			} else {
+				ImGui::TextDisabled("-");
+			}
+			ImGui::TableSetColumnIndex(8);
+			ImGui::TextUnformatted(
+				outer.measuredDirectionCount > 0 && outer.measured[direction]
+					? "Yes"
+					: "No"
+			);
+		}
+		ImGui::EndTable();
+	}
+	ImGui::TreePop();
+}
+
 void DrawCalibrationHand(
 	GuiState& state,
 	qss::ControllerHand hand,
@@ -1258,6 +1346,7 @@ void DrawCalibrationHand(
 	}
 
 	DrawCalibrationRangePlot("##Range", center, outer);
+	DrawCalibrationDirectionTable(center, outer);
 
 	if (center.valid || outer.valid) {
 		if (ImGui::Button("Apply measured values")) {
