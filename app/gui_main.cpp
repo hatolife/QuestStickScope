@@ -112,6 +112,7 @@ qss::SharedHandCorrection ToSharedCorrection(const qss::CorrectionSettings& sett
 	shared.centerX = settings.center.x;
 	shared.centerY = settings.center.y;
 	shared.innerDeadzone = settings.innerDeadzone;
+	shared.innerRadius = settings.innerRadius;
 	shared.outerRadius = settings.outerRadius;
 	return shared;
 }
@@ -125,6 +126,7 @@ qss::CorrectionSettings ToCorrectionSettings(const qss::SharedHandCorrection& sh
 	settings.clampEnabled = shared.clampEnabled != 0;
 	settings.center = {shared.centerX, shared.centerY};
 	settings.innerDeadzone = shared.innerDeadzone;
+	settings.innerRadius = shared.innerRadius;
 	settings.outerRadius = shared.outerRadius;
 	return settings;
 }
@@ -435,16 +437,25 @@ struct GuiState {
 		qss::CorrectionSettings settings = ToCorrectionSettings(*destination);
 		if (center.valid) {
 			settings.center = center.center;
-			settings.innerDeadzone = center.recommendedDeadzone;
+			settings.innerDeadzone = 0.0F;
+			settings.innerRadius = center.innerRadius;
 		}
 		if (outer.valid) {
 			settings.outerRadius = outer.radius;
+		}
+		for (std::size_t direction = 0;
+			direction < qss::kCorrectionDirectionCount;
+			++direction) {
+			settings.outerRadius[direction] = std::max(
+				settings.outerRadius[direction],
+				settings.innerRadius[direction] + 0.05F
+			);
 		}
 		const bool wasEnabled = destination->enabled != 0;
 		*destination = ToSharedCorrection(settings);
 		destination->enabled = wasEnabled ? 1U : 0U;
 		MarkCorrectionDirty();
-		calibrationStatus = "Calibration values copied to correction settings.";
+		calibrationStatus = "360-degree calibration values copied to correction settings.";
 	}
 
 	void TrimHistory(
@@ -1023,7 +1034,7 @@ bool DrawCorrectionControls(qss::SharedHandCorrection& correction) {
 		correction.innerDeadzoneEnabled = deadzoneEnabled ? 1U : 0U;
 		changed = true;
 	}
-	if (ImGui::SliderFloat("Deadzone radius", &correction.innerDeadzone, 0.0F, 0.5F, "%.4f")) {
+	if (ImGui::SliderFloat("Minimum deadzone radius", &correction.innerDeadzone, 0.0F, 0.5F, "%.4f")) {
 		changed = true;
 	}
 
@@ -1032,7 +1043,7 @@ bool DrawCorrectionControls(qss::SharedHandCorrection& correction) {
 		correction.outerNormalizationEnabled = outerEnabled ? 1U : 0U;
 		changed = true;
 	}
-	ImGui::TextDisabled("Outer table is currently initialized to 1.0; calibration will populate it.");
+	ImGui::TextDisabled("Calibration uses 360 one-degree inner/outer radius entries.");
 	return changed;
 }
 
@@ -1131,23 +1142,51 @@ void DrawCalibrationHand(
 	}
 
 	if (center.valid) {
+		const auto innerMinimum = std::min_element(
+			center.minimumRadius.begin(),
+			center.minimumRadius.end()
+		);
+		const auto innerMaximum = std::max_element(
+			center.maximumRadius.begin(),
+			center.maximumRadius.end()
+		);
 		ImGui::Text(
-			"Center: X %+.5f  Y %+.5f  Noise P99 %.5f  Deadzone %.5f",
+			"Center: X %+.5f  Y %+.5f  Noise P99 %.5f",
 			center.center.x,
 			center.center.y,
-			center.noiseRadiusP99,
-			center.recommendedDeadzone
+			center.noiseRadiusP99
+		);
+		ImGui::Text(
+			"Inner directions: %zu / %zu | observed radius %.5f .. %.5f",
+			center.measuredDirectionCount,
+			qss::kCorrectionDirectionCount,
+			innerMinimum != center.minimumRadius.end() ? *innerMinimum : 0.0F,
+			innerMaximum != center.maximumRadius.end() ? *innerMaximum : 0.0F
 		);
 	} else {
-		ImGui::TextDisabled("Center: not measured");
+		ImGui::TextDisabled("Center / inner range: not measured");
 	}
 
-	ImGui::Text(
-		"Outer directions: %zu / %zu%s",
-		outer.measuredDirectionCount,
-		qss::kOuterDirectionCount,
-		outer.valid ? "" : " (insufficient)"
-	);
+	if (outer.measuredDirectionCount > 0) {
+		const auto outerMinimum = std::min_element(
+			outer.minimumRadius.begin(),
+			outer.minimumRadius.end()
+		);
+		const auto outerMaximum = std::max_element(
+			outer.maximumRadius.begin(),
+			outer.maximumRadius.end()
+		);
+		ImGui::Text(
+			"Outer directions: %zu / %zu%s | observed radius %.5f .. %.5f",
+			outer.measuredDirectionCount,
+			qss::kCorrectionDirectionCount,
+			outer.valid ? "" : " (insufficient)",
+			outerMinimum != outer.minimumRadius.end() ? *outerMinimum : 0.0F,
+			outerMaximum != outer.maximumRadius.end() ? *outerMaximum : 0.0F
+		);
+	} else {
+		ImGui::TextDisabled("Outer range: not measured");
+	}
 
 	if (center.valid || outer.valid) {
 		if (ImGui::Button("Apply measured values")) {
