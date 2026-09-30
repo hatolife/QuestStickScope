@@ -7,7 +7,8 @@
 
 namespace qss {
 
-inline constexpr std::size_t kOuterDirectionCount = 64;
+inline constexpr std::size_t kCorrectionDirectionCount = 360;
+inline constexpr std::size_t kOuterDirectionCount = kCorrectionDirectionCount;
 
 struct CorrectionSettings {
 	bool enabled = false;
@@ -17,7 +18,8 @@ struct CorrectionSettings {
 	bool clampEnabled = true;
 	Vec2 center{};
 	float innerDeadzone = 0.0F;
-	std::array<float, kOuterDirectionCount> outerRadius{};
+	std::array<float, kCorrectionDirectionCount> innerRadius{};
+	std::array<float, kCorrectionDirectionCount> outerRadius{};
 
 	CorrectionSettings();
 };
@@ -30,6 +32,7 @@ struct CorrectionResult {
 };
 
 CorrectionResult ApplyCorrection(Vec2 input, const CorrectionSettings& settings);
+float InterpolateInnerRadius(Vec2 centeredInput, const CorrectionSettings& settings);
 float InterpolateOuterRadius(Vec2 centeredInput, const CorrectionSettings& settings);
 
 } // namespace qss

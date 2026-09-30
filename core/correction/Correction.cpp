@@ -7,7 +7,7 @@
 namespace qss {
 namespace {
 
-constexpr float kMinimumOuterRadius = 0.001F;
+constexpr float kMinimumRange = 0.001F;
 
 bool IsFinite(float value) {
 	return std::isfinite(value);
@@ -36,38 +36,67 @@ Vec2 ScaleToRadius(Vec2 value, float radius) {
 	return {value.x * scale, value.y * scale};
 }
 
+float InterpolateRadius(
+	Vec2 centeredInput,
+	const std::array<float, kCorrectionDirectionCount>& radius,
+	float minimum
+) {
+	centeredInput = Sanitize(centeredInput);
+	if (Length(centeredInput) <= 0.0F) {
+		return minimum;
+	}
+
+	float angle = std::atan2(centeredInput.y, centeredInput.x);
+	if (angle < 0.0F) {
+		angle += 2.0F * std::numbers::pi_v<float>;
+	}
+
+	const float scaled = angle * static_cast<float>(kCorrectionDirectionCount) /
+		(2.0F * std::numbers::pi_v<float>);
+	const std::size_t index0 =
+		static_cast<std::size_t>(std::floor(scaled)) % kCorrectionDirectionCount;
+	const std::size_t index1 = (index0 + 1) % kCorrectionDirectionCount;
+	const float t = scaled - std::floor(scaled);
+
+	const float radius0 = std::max(radius[index0], minimum);
+	const float radius1 = std::max(radius[index1], minimum);
+	return radius0 + (radius1 - radius0) * t;
+}
+
 Vec2 ApplyInnerDeadzone(Vec2 value, float deadzone) {
 	deadzone = std::clamp(deadzone, 0.0F, 0.999F);
 	const float radius = Length(value);
 	if (radius <= deadzone) {
 		return {};
 	}
-
 	const float remappedRadius = (radius - deadzone) / (1.0F - deadzone);
 	return ScaleToRadius(value, remappedRadius);
 }
 
-Vec2 ApplyOuterNormalization(Vec2 deadzoned, Vec2 centered, const CorrectionSettings& settings) {
-	const float centeredRadius = Length(centered);
-	if (centeredRadius <= 0.0F) {
+Vec2 ApplyOuterNormalization(
+	Vec2 deadzoned,
+	Vec2 centered,
+	float innerRadius,
+	const CorrectionSettings& settings
+) {
+	if (Length(centered) <= 0.0F) {
+		return {};
+	}
+	const float outerRadius = std::max(
+		InterpolateOuterRadius(centered, settings),
+		kMinimumRange
+	);
+	if (outerRadius <= innerRadius + kMinimumRange) {
 		return {};
 	}
 
-	float outerRadius = InterpolateOuterRadius(centered, settings);
-	outerRadius = std::max(outerRadius, kMinimumOuterRadius);
-
 	float effectiveOuterRadius = outerRadius;
 	if (settings.innerDeadzoneEnabled) {
-		const float deadzone = std::clamp(settings.innerDeadzone, 0.0F, 0.999F);
-		if (outerRadius <= deadzone) {
-			return {};
-		}
-		effectiveOuterRadius = (outerRadius - deadzone) / (1.0F - deadzone);
+		const float inner = std::clamp(innerRadius, 0.0F, 0.999F);
+		effectiveOuterRadius = (outerRadius - inner) / (1.0F - inner);
 	}
-
-	effectiveOuterRadius = std::max(effectiveOuterRadius, kMinimumOuterRadius);
-	const float deadzonedRadius = Length(deadzoned);
-	return ScaleToRadius(deadzoned, deadzonedRadius / effectiveOuterRadius);
+	effectiveOuterRadius = std::max(effectiveOuterRadius, kMinimumRange);
+	return ScaleToRadius(deadzoned, Length(deadzoned) / effectiveOuterRadius);
 }
 
 Vec2 ClampUnitCircle(Vec2 value) {
@@ -81,29 +110,16 @@ Vec2 ClampUnitCircle(Vec2 value) {
 } // namespace
 
 CorrectionSettings::CorrectionSettings() {
+	innerRadius.fill(0.0F);
 	outerRadius.fill(1.0F);
 }
 
+float InterpolateInnerRadius(Vec2 centeredInput, const CorrectionSettings& settings) {
+	return InterpolateRadius(centeredInput, settings.innerRadius, 0.0F);
+}
+
 float InterpolateOuterRadius(Vec2 centeredInput, const CorrectionSettings& settings) {
-	centeredInput = Sanitize(centeredInput);
-	if (Length(centeredInput) <= 0.0F) {
-		return 1.0F;
-	}
-
-	float angle = std::atan2(centeredInput.y, centeredInput.x);
-	if (angle < 0.0F) {
-		angle += 2.0F * std::numbers::pi_v<float>;
-	}
-
-	const float scaled = angle * static_cast<float>(kOuterDirectionCount) /
-		(2.0F * std::numbers::pi_v<float>);
-	const std::size_t index0 = static_cast<std::size_t>(std::floor(scaled)) % kOuterDirectionCount;
-	const std::size_t index1 = (index0 + 1) % kOuterDirectionCount;
-	const float t = scaled - std::floor(scaled);
-
-	const float radius0 = std::max(settings.outerRadius[index0], kMinimumOuterRadius);
-	const float radius1 = std::max(settings.outerRadius[index1], kMinimumOuterRadius);
-	return radius0 + (radius1 - radius0) * t;
+	return InterpolateRadius(centeredInput, settings.outerRadius, kMinimumRange);
 }
 
 CorrectionResult ApplyCorrection(Vec2 input, const CorrectionSettings& settings) {
@@ -125,15 +141,29 @@ CorrectionResult ApplyCorrection(Vec2 input, const CorrectionSettings& settings)
 	}
 	result.centered = Sanitize(result.centered);
 
+	float innerRadius = 0.0F;
+	if (settings.innerDeadzoneEnabled) {
+		innerRadius = std::max(
+			std::clamp(settings.innerDeadzone, 0.0F, 0.999F),
+			InterpolateInnerRadius(result.centered, settings)
+		);
+		innerRadius = std::clamp(innerRadius, 0.0F, 0.999F);
+	}
+
 	result.deadzoned = result.centered;
 	if (settings.innerDeadzoneEnabled) {
-		result.deadzoned = ApplyInnerDeadzone(result.centered, settings.innerDeadzone);
+		result.deadzoned = ApplyInnerDeadzone(result.centered, innerRadius);
 	}
 	result.deadzoned = Sanitize(result.deadzoned);
 
 	result.normalized = result.deadzoned;
 	if (settings.outerNormalizationEnabled) {
-		result.normalized = ApplyOuterNormalization(result.deadzoned, result.centered, settings);
+		result.normalized = ApplyOuterNormalization(
+			result.deadzoned,
+			result.centered,
+			innerRadius,
+			settings
+		);
 	}
 	result.normalized = Sanitize(result.normalized);
 
@@ -142,7 +172,6 @@ CorrectionResult ApplyCorrection(Vec2 input, const CorrectionSettings& settings)
 		result.output = ClampUnitCircle(result.output);
 	}
 	result.output = Sanitize(result.output);
-
 	return result;
 }
 

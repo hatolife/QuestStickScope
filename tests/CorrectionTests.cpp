@@ -59,6 +59,36 @@ TEST(CorrectionTests, InnerDeadzoneRescalesRemainingRange) {
 	EXPECT_NEAR(result.output.y, 0.0F, kTolerance);
 }
 
+TEST(CorrectionTests, DirectionalInnerDeadzoneUsesCalibratedRadius) {
+	qss::CorrectionSettings settings;
+	settings.enabled = true;
+	settings.centerOffsetEnabled = false;
+	settings.innerRadius.fill(0.0F);
+	settings.innerRadius[0] = 0.2F;
+	settings.outerNormalizationEnabled = false;
+
+	const qss::CorrectionResult result = qss::ApplyCorrection({0.15F, 0.0F}, settings);
+
+	EXPECT_NEAR(result.output.x, 0.0F, kTolerance);
+	EXPECT_NEAR(result.output.y, 0.0F, kTolerance);
+}
+
+TEST(CorrectionTests, DirectionalRangeMapsInnerToZeroAndOuterToOne) {
+	qss::CorrectionSettings settings;
+	settings.enabled = true;
+	settings.centerOffsetEnabled = false;
+	settings.innerRadius.fill(0.0F);
+	settings.outerRadius.fill(1.0F);
+	settings.innerRadius[0] = 0.2F;
+	settings.outerRadius[0] = 0.8F;
+
+	const qss::CorrectionResult middle = qss::ApplyCorrection({0.5F, 0.0F}, settings);
+	const qss::CorrectionResult outer = qss::ApplyCorrection({0.8F, 0.0F}, settings);
+
+	EXPECT_NEAR(middle.output.x, 0.5F, kTolerance);
+	EXPECT_NEAR(outer.output.x, 1.0F, kTolerance);
+}
+
 TEST(CorrectionTests, DirectionalOuterNormalizationUsesCalibratedRadius) {
 	qss::CorrectionSettings settings;
 	settings.enabled = true;
@@ -76,10 +106,10 @@ TEST(CorrectionTests, DirectionalOuterNormalizationUsesCalibratedRadius) {
 TEST(CorrectionTests, OuterRadiusInterpolationWrapsAcrossZeroAngle) {
 	qss::CorrectionSettings settings;
 	settings.outerRadius.fill(1.0F);
-	settings.outerRadius[63] = 0.8F;
+	settings.outerRadius[359] = 0.8F;
 	settings.outerRadius[0] = 1.0F;
 
-	const float angle = -std::numbers::pi_v<float> / 64.0F;
+	const float angle = -std::numbers::pi_v<float> / 360.0F;
 	const qss::Vec2 input{std::cos(angle), std::sin(angle)};
 	const float radius = qss::InterpolateOuterRadius(input, settings);
 

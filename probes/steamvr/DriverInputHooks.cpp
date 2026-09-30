@@ -18,7 +18,7 @@
 namespace qss {
 namespace {
 
-static_assert(kOuterDirectionCount == kSharedOuterDirectionCount);
+static_assert(kCorrectionDirectionCount == kSharedDirectionCount);
 
 using CreateScalarComponentFn = vr::EVRInputError(*)(
 	vr::IVRDriverInput*,
@@ -192,6 +192,7 @@ CorrectionSettings ToCorrectionSettings(const SharedHandCorrection& shared) {
 	settings.clampEnabled = shared.clampEnabled != 0;
 	settings.center = {shared.centerX, shared.centerY};
 	settings.innerDeadzone = shared.innerDeadzone;
+	settings.innerRadius = shared.innerRadius;
 	settings.outerRadius = shared.outerRadius;
 	return settings;
 }
