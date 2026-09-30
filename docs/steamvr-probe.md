@@ -31,16 +31,18 @@ RAW
  |
  +-- Center Offset
  |
- +-- radial Inner Deadzone
+ +-- 360-direction Inner Deadzone
  |
- +-- 64-direction Outer Normalization
+ +-- 360-direction Outer Normalization
  |
  +-- Clamp
  |
 OUTPUT
 ```
 
-GUIから設定を共有メモリへ配布する。
+GUIから左右それぞれのCenter Offset、1°刻み360方向のInner/Outer半径テーブル、Clamp設定を共有メモリへ配布する。
+
+方向別補正は、中心補正後の入力角度について隣接する1°テーブル値を補間して使用する。
 
 GUI heartbeat が2秒以上途絶えた場合、Probe は補正設定が有効でも raw 値をそのまま通す。
 

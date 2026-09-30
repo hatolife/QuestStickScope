@@ -14,8 +14,8 @@ QuestStickScope は、Meta Quest 3 + Touch Plus Controller + Virtual Desktop + S
 - component 作成を取り逃した場合の unknown handle 観測
 - QPC timestamp、sequence、raw/output を共有メモリへ転送
 - Center Offset
-- 2次元 Inner Deadzone
-- 64方向 Directional Outer Normalization
+- 360方向（1°刻み）Directional Inner Deadzone
+- 360方向（1°刻み）Directional Outer Normalization
 - Clamp
 - GUI heartbeat が途絶えた場合の自動パススルー
 - 補正前後の同時記録
@@ -35,13 +35,14 @@ QuestStickScope は、Meta Quest 3 + Touch Plus Controller + Virtual Desktop + S
 
 ### Calibration
 
-- Center 3秒計測
-- 中央値による中心推定
-- 中心ノイズ P99
-- 推奨 deadzone 生成
-- 64方向 Outer Range 計測
-- 方向ごとの95パーセンタイル外周
-- 未取得方向の円周補間
+- ボタン押下後5秒待機し、その後10秒間を自動計測
+- Centerは中央値で中心を推定
+- Center計測から1°ごとの内周 min/max と有効境界を生成
+- Outer計測から1°ごとの外周 min/max と有効境界を生成
+- 内周は近傍±2°のP99を基準に安全マージンを加えて決定
+- 外周は近傍±2°のP95を採用
+- 未取得方向は円周方向に補間
+- 0〜359°の実測min/max/effective値をGUIで確認可能
 - 左右個別適用
 - `%LOCALAPPDATA%\QuestStickScope\calibration.json` への保存・復元
 - 設定破損時は補正OFFの安全な既定値へフォールバック
