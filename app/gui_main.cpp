@@ -36,6 +36,8 @@
 #include <utility>
 #include <vector>
 
+extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND window, UINT message, WPARAM wParam, LPARAM lParam);
+
 namespace {
 
 ID3D11Device* g_device = nullptr;
@@ -1676,8 +1678,6 @@ void CleanupDeviceD3D() {
 		g_device = nullptr;
 	}
 }
-
-extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND window, UINT message, WPARAM wParam, LPARAM lParam);
 
 LRESULT WINAPI WndProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
 	qss::WindowsRawInputObserver::HandleWindowMessage(message, wParam, lParam);
