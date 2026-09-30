@@ -19,6 +19,7 @@ TEST(CorrectionStoreTests, RoundTripsCorrectionSettings) {
 	left.centerX = 0.08F;
 	left.centerY = -0.03F;
 	left.innerDeadzone = 0.12F;
+	left.innerRadius[17] = 0.07F;
 	left.outerRadius[17] = 0.84F;
 
 	std::string error;
@@ -31,6 +32,7 @@ TEST(CorrectionStoreTests, RoundTripsCorrectionSettings) {
 	EXPECT_FLOAT_EQ(loadedLeft.centerX, 0.08F);
 	EXPECT_FLOAT_EQ(loadedLeft.centerY, -0.03F);
 	EXPECT_FLOAT_EQ(loadedLeft.innerDeadzone, 0.12F);
+	EXPECT_FLOAT_EQ(loadedLeft.innerRadius[17], 0.07F);
 	EXPECT_FLOAT_EQ(loadedLeft.outerRadius[17], 0.84F);
 	EXPECT_FLOAT_EQ(loadedRight.outerRadius[17], 1.0F);
 
@@ -51,8 +53,14 @@ TEST(CorrectionStoreTests, InvalidFileFallsBackToSafeDisabledDefaults) {
 	EXPECT_FALSE(qss::LoadCorrectionSettings(path, left, right, &error));
 	EXPECT_EQ(left.enabled, 0U);
 	EXPECT_EQ(right.enabled, 0U);
+	for (const float radius : left.innerRadius) {
+		EXPECT_FLOAT_EQ(radius, 0.0F);
+	}
 	for (const float radius : left.outerRadius) {
 		EXPECT_FLOAT_EQ(radius, 1.0F);
+	}
+	for (const float radius : right.innerRadius) {
+		EXPECT_FLOAT_EQ(radius, 0.0F);
 	}
 	for (const float radius : right.outerRadius) {
 		EXPECT_FLOAT_EQ(radius, 1.0F);

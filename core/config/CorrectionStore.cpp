@@ -9,7 +9,7 @@
 namespace qss {
 namespace {
 
-constexpr int kFormatVersion = 1;
+constexpr int kFormatVersion = 2;
 
 void SetError(std::string* errorMessage, const std::string& message) {
 	if (errorMessage != nullptr) {
@@ -26,6 +26,7 @@ nlohmann::json ToJson(const SharedHandCorrection& value) {
 		{"clamp_enabled", value.clampEnabled != 0},
 		{"center", {value.centerX, value.centerY}},
 		{"inner_deadzone", value.innerDeadzone},
+		{"inner_radius", value.innerRadius},
 		{"outer_radius", value.outerRadius},
 	};
 }
@@ -50,9 +51,17 @@ SharedHandCorrection FromJson(const nlohmann::json& json) {
 	value.centerY = center.at(1).get<float>();
 	value.innerDeadzone = json.at("inner_deadzone").get<float>();
 
+	const auto& inner = json.at("inner_radius");
+	if (!inner.is_array() || inner.size() != kSharedDirectionCount) {
+		throw std::runtime_error("inner_radius must contain 360 values");
+	}
+	for (std::size_t index = 0; index < value.innerRadius.size(); ++index) {
+		value.innerRadius[index] = inner.at(index).get<float>();
+	}
+
 	const auto& outer = json.at("outer_radius");
-	if (!outer.is_array() || outer.size() != kSharedOuterDirectionCount) {
-		throw std::runtime_error("outer_radius must contain 64 values");
+	if (!outer.is_array() || outer.size() != kSharedDirectionCount) {
+		throw std::runtime_error("outer_radius must contain 360 values");
 	}
 	for (std::size_t index = 0; index < value.outerRadius.size(); ++index) {
 		value.outerRadius[index] = outer.at(index).get<float>();
@@ -62,6 +71,11 @@ SharedHandCorrection FromJson(const nlohmann::json& json) {
 		!IsFiniteInRange(value.centerY, -2.0F, 2.0F) ||
 		!IsFiniteInRange(value.innerDeadzone, 0.0F, 0.999F)) {
 		throw std::runtime_error("center or deadzone is outside the valid range");
+	}
+	for (const float radius : value.innerRadius) {
+		if (!IsFiniteInRange(radius, 0.0F, 0.999F)) {
+			throw std::runtime_error("inner radius is outside the valid range");
+		}
 	}
 	for (const float radius : value.outerRadius) {
 		if (!IsFiniteInRange(radius, 0.001F, 4.0F)) {
@@ -80,6 +94,7 @@ SharedHandCorrection MakeDefaultSharedCorrection() {
 	value.innerDeadzoneEnabled = 1;
 	value.outerNormalizationEnabled = 1;
 	value.clampEnabled = 1;
+	value.innerRadius.fill(0.0F);
 	value.outerRadius.fill(1.0F);
 	return value;
 }

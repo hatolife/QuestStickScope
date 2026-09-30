@@ -11,7 +11,7 @@ namespace qss {
 namespace {
 
 constexpr std::array<char, 8> kMagic = {'Q', 'S', 'S', 'R', 'E', 'C', '1', '\0'};
-constexpr std::uint32_t kFormatVersion = 4;
+constexpr std::uint32_t kFormatVersion = 5;
 constexpr std::uint32_t kMaxComponentCount = 4096;
 constexpr std::uint64_t kMaxSampleCount = 100000000ULL;
 constexpr std::uint64_t kMaxWindowsInputSampleCount = 100000000ULL;
@@ -92,6 +92,11 @@ bool WriteHandCorrection(std::ostream& stream, const SharedHandCorrection& corre
 		!WriteValue(stream, correction.innerDeadzone)) {
 		return false;
 	}
+	for (const float radius : correction.innerRadius) {
+		if (!WriteValue(stream, radius)) {
+			return false;
+		}
+	}
 	for (const float radius : correction.outerRadius) {
 		if (!WriteValue(stream, radius)) {
 			return false;
@@ -110,6 +115,11 @@ bool ReadHandCorrection(std::istream& stream, SharedHandCorrection& correction) 
 		!ReadValue(stream, correction.centerY) ||
 		!ReadValue(stream, correction.innerDeadzone)) {
 		return false;
+	}
+	for (float& radius : correction.innerRadius) {
+		if (!ReadValue(stream, radius)) {
+			return false;
+		}
 	}
 	for (float& radius : correction.outerRadius) {
 		if (!ReadValue(stream, radius)) {

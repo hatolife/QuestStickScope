@@ -23,6 +23,7 @@ TEST(RecordingTests, RoundTripsComponentsAndSamples) {
 	source.leftCorrection.enabled = 1;
 	source.leftCorrection.centerX = 0.08F;
 	source.leftCorrection.innerDeadzone = 0.12F;
+	source.leftCorrection.innerRadius.fill(0.04F);
 	source.leftCorrection.outerRadius.fill(0.9F);
 	source.rightCorrection.outerRadius.fill(1.0F);
 	source.initialLeftX = 0.2F;
@@ -75,6 +76,7 @@ TEST(RecordingTests, RoundTripsComponentsAndSamples) {
 	EXPECT_EQ(loaded.leftCorrection.enabled, 1U);
 	EXPECT_FLOAT_EQ(loaded.leftCorrection.centerX, 0.08F);
 	EXPECT_FLOAT_EQ(loaded.leftCorrection.innerDeadzone, 0.12F);
+	EXPECT_FLOAT_EQ(loaded.leftCorrection.innerRadius[17], 0.04F);
 	EXPECT_FLOAT_EQ(loaded.leftCorrection.outerRadius[17], 0.9F);
 	EXPECT_FLOAT_EQ(loaded.initialLeftX, 0.2F);
 	EXPECT_FLOAT_EQ(loaded.initialLeftY, -0.3F);
