@@ -87,6 +87,8 @@ jobs:
           Copy-Item "build/windows-release/QuestStickScopeCli.exe" $root
           Copy-Item "build/windows-release/steamvr-driver" $root -Recurse
           Copy-Item "tools" $root -Recurse
+          Copy-Item "tools/Register-SteamVRDriver.ps1" $root
+          Copy-Item "tools/Unregister-SteamVRDriver.ps1" $root
           Copy-Item "README.md" $root
           Copy-Item "PLAN.md" $root
 

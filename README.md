@@ -94,11 +94,20 @@ build/windows-debug/
 
 ## SteamVR Probe の登録
 
-SteamVR を終了してから実行します。
+Release ZIPを展開した場合は、ZIP直下の登録スクリプトを実行します。
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\Register-SteamVRDriver.ps1
+```
+
+開発ツリーから実行する場合は次のスクリプトを使用できます。
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File tools/Register-SteamVRDriver.ps1
 ```
+
+スクリプトはRelease配置とDebug/Releaseビルド配置を自動判定し、SteamVRのインストール先はSteamVR公式のアンインストールレジストリ情報から自動検出します。
+SteamVRが起動中でも登録できますが、ProbeがロードされるのはSteamVRを完全終了して再起動した後です。
 
 SteamVR と Virtual Desktop を起動した後、GUIを起動します。
 
@@ -113,6 +122,14 @@ build/windows-debug/QuestStickScopeCli.exe --steamvr-status
 ```
 
 登録解除:
+
+Release ZIP:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\Unregister-SteamVRDriver.ps1
+```
+
+開発ツリー:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File tools/Unregister-SteamVRDriver.ps1

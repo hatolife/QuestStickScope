@@ -1,21 +1,85 @@
 param(
-	[string]$BuildDir = "build/windows-debug",
-	[string]$SteamVRDir = "${env:ProgramFiles(x86)}\Steam\steamapps\common\SteamVR"
+	[string]$BuildDir = "",
+	[string]$SteamVRDir = ""
 )
 
 $ErrorActionPreference = "Stop"
 
-$driverRoot = Join-Path $BuildDir "steamvr-driver\queststickscope"
-$driverRoot = (Resolve-Path $driverRoot).Path
-$vrPathReg = Join-Path $SteamVRDir "bin\win64\vrpathreg.exe"
+function Resolve-DriverRoot {
+	$candidates = @()
+	if ($BuildDir) {
+		$candidates += (Join-Path $BuildDir "steamvr-driver\queststickscope")
+	}
 
-if (-not (Test-Path $vrPathReg)) {
-	throw "vrpathreg.exe が見つかりません: $vrPathReg"
+	$candidates += (Join-Path $PSScriptRoot "steamvr-driver\queststickscope")
+	$parent = Split-Path $PSScriptRoot -Parent
+	if ($parent) {
+		$candidates += (Join-Path $parent "steamvr-driver\queststickscope")
+		$candidates += (Join-Path $parent "build\windows-debug\steamvr-driver\queststickscope")
+		$candidates += (Join-Path $parent "build\windows-release\steamvr-driver\queststickscope")
+	}
+
+	foreach ($candidate in $candidates | Select-Object -Unique) {
+		$manifest = Join-Path $candidate "driver.vrdrivermanifest"
+		if (Test-Path $manifest) {
+			return (Resolve-Path $candidate).Path
+		}
+	}
+
+	throw "QuestStickScope SteamVR driver が見つかりません。Release ZIPを展開した状態で実行するか、-BuildDir を指定してください。"
 }
+
+function Resolve-SteamVRRoot {
+	if ($SteamVRDir) {
+		if (Test-Path (Join-Path $SteamVRDir "bin\win64\vrpathreg.exe")) {
+			return (Resolve-Path $SteamVRDir).Path
+		}
+		throw "指定されたSteamVRDirに vrpathreg.exe が見つかりません: $SteamVRDir"
+	}
+
+	$registryKeys = @(
+		"HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Steam App 250820",
+		"HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\Steam App 250820"
+	)
+	foreach ($key in $registryKeys) {
+		try {
+			$installLocation = (Get-ItemProperty -Path $key -Name InstallLocation -ErrorAction Stop).InstallLocation
+			if ($installLocation -and (Test-Path (Join-Path $installLocation "bin\win64\vrpathreg.exe"))) {
+				return (Resolve-Path $installLocation).Path
+			}
+		} catch {
+		}
+	}
+
+	$default = "${env:ProgramFiles(x86)}\Steam\steamapps\common\SteamVR"
+	if (Test-Path (Join-Path $default "bin\win64\vrpathreg.exe")) {
+		return (Resolve-Path $default).Path
+	}
+
+	throw "SteamVR が見つかりません。-SteamVRDir でSteamVRのインストール先を指定してください。"
+}
+
+$driverRoot = Resolve-DriverRoot
+$steamVRRoot = Resolve-SteamVRRoot
+$vrPathReg = Join-Path $steamVRRoot "bin\win64\vrpathreg.exe"
+
+Write-Host "QuestStickScope driver: $driverRoot"
+Write-Host "SteamVR: $steamVRRoot"
 
 & $vrPathReg removedriver $driverRoot
 if ($LASTEXITCODE -ne 0) {
 	throw "vrpathreg.exe removedriver が失敗しました。終了コード: $LASTEXITCODE"
 }
 
-Write-Host "QuestStickScope SteamVR driver unregistered: $driverRoot"
+$registered = (& $vrPathReg show | Out-String)
+if ($LASTEXITCODE -ne 0) {
+	throw "vrpathreg.exe show が失敗しました。終了コード: $LASTEXITCODE"
+}
+if ($registered -match [regex]::Escape($driverRoot)) {
+	throw "登録解除後の確認に失敗しました。vrpathreg.exe show にQuestStickScopeのdriver pathが残っています。"
+}
+
+Write-Host "QuestStickScope SteamVR driver unregistered."
+if (Get-Process -Name vrserver -ErrorAction SilentlyContinue) {
+	Write-Warning "SteamVR は現在起動中です。完全に反映するにはSteamVRを再起動してください。"
+}
