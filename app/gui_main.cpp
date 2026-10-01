@@ -863,7 +863,7 @@ const char* SemanticName(qss::ScalarSemantic semantic) {
 void DrawStickPlot(
 	const char* label,
 	const qss::LiveStickState& stick,
-	const qss::SharedHandCorrection* correction,
+	const qss::SharedHandCorrection* correction = nullptr,
 	const std::deque<qss::StickPointSample>* history = nullptr
 ) {
 	const double rawX = stick.x.rawValue;
