@@ -19,6 +19,9 @@ TEST(CorrectionStoreTests, RoundTripsCorrectionSettings) {
 	left.centerX = 0.08F;
 	left.centerY = -0.03F;
 	left.innerDeadzone = 0.12F;
+	left.outerScale = 0.91F;
+	left.responseCurve = 0.35F;
+	left.smoothing = 0.42F;
 	left.innerRadius[17] = 0.07F;
 	left.outerRadius[17] = 0.84F;
 
@@ -32,6 +35,9 @@ TEST(CorrectionStoreTests, RoundTripsCorrectionSettings) {
 	EXPECT_FLOAT_EQ(loadedLeft.centerX, 0.08F);
 	EXPECT_FLOAT_EQ(loadedLeft.centerY, -0.03F);
 	EXPECT_FLOAT_EQ(loadedLeft.innerDeadzone, 0.12F);
+	EXPECT_FLOAT_EQ(loadedLeft.outerScale, 0.91F);
+	EXPECT_FLOAT_EQ(loadedLeft.responseCurve, 0.35F);
+	EXPECT_FLOAT_EQ(loadedLeft.smoothing, 0.42F);
 	EXPECT_FLOAT_EQ(loadedLeft.innerRadius[17], 0.07F);
 	EXPECT_FLOAT_EQ(loadedLeft.outerRadius[17], 0.84F);
 	EXPECT_FLOAT_EQ(loadedRight.outerRadius[17], 1.0F);

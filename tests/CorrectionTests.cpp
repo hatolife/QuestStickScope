@@ -116,6 +116,54 @@ TEST(CorrectionTests, OuterRadiusInterpolationWrapsAcrossZeroAngle) {
 	EXPECT_NEAR(radius, 0.9F, 0.01F);
 }
 
+TEST(CorrectionTests, OuterScaleChangesMaximumZone) {
+	qss::CorrectionSettings settings;
+	settings.enabled = true;
+	settings.centerOffsetEnabled = false;
+	settings.innerDeadzoneEnabled = false;
+	settings.outerRadius.fill(1.0F);
+	settings.outerScale = 0.8F;
+
+	const qss::CorrectionResult result = qss::ApplyCorrection({0.8F, 0.0F}, settings);
+
+	EXPECT_NEAR(result.output.x, 1.0F, kTolerance);
+	EXPECT_NEAR(result.output.y, 0.0F, kTolerance);
+}
+
+TEST(CorrectionTests, PositiveResponseCurveIncreasesMidRange) {
+	qss::CorrectionSettings settings;
+	settings.enabled = true;
+	settings.centerOffsetEnabled = false;
+	settings.innerDeadzoneEnabled = false;
+	settings.outerNormalizationEnabled = false;
+	settings.responseCurve = 1.0F;
+
+	const qss::CorrectionResult result = qss::ApplyCorrection({0.25F, 0.0F}, settings);
+
+	EXPECT_NEAR(result.output.x, 0.5F, kTolerance);
+}
+
+TEST(CorrectionTests, NegativeResponseCurveReducesMidRange) {
+	qss::CorrectionSettings settings;
+	settings.enabled = true;
+	settings.centerOffsetEnabled = false;
+	settings.innerDeadzoneEnabled = false;
+	settings.outerNormalizationEnabled = false;
+	settings.responseCurve = -1.0F;
+
+	const qss::CorrectionResult result = qss::ApplyCorrection({0.5F, 0.0F}, settings);
+
+	EXPECT_NEAR(result.output.x, 0.25F, kTolerance);
+}
+
+TEST(CorrectionTests, SmoothingMovesTowardInputWithoutOvershoot) {
+	const float output = qss::ApplySmoothing(1.0F, 0.0F, 1.0F, 10, 1000);
+
+	EXPECT_GT(output, 0.0F);
+	EXPECT_LT(output, 1.0F);
+	EXPECT_FLOAT_EQ(qss::ApplySmoothing(1.0F, 0.0F, 0.0F, 10, 1000), 1.0F);
+}
+
 TEST(CorrectionTests, ClampLimitsOutputToUnitCircle) {
 	qss::CorrectionSettings settings;
 	settings.enabled = true;

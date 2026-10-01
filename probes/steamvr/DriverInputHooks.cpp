@@ -54,10 +54,19 @@ struct RawStickState {
 	std::atomic<float> y{0.0F};
 };
 
+struct ScalarSmoothingState {
+	std::atomic<float> value{0.0F};
+	std::atomic<std::int64_t> timestampTicks{0};
+};
+
 std::array<ComponentBinding, kSteamVRMaxScalarComponents> g_componentBindings{};
 std::mutex g_bindingMutationMutex;
 RawStickState g_leftRaw{};
 RawStickState g_rightRaw{};
+ScalarSmoothingState g_leftSmoothingX{};
+ScalarSmoothingState g_leftSmoothingY{};
+ScalarSmoothingState g_rightSmoothingX{};
+ScalarSmoothingState g_rightSmoothingY{};
 SteamVRSharedMemoryWriter* g_sharedMemory = nullptr;
 CreateScalarComponentFn g_originalCreateScalar = nullptr;
 UpdateScalarComponentFn g_originalUpdateScalar = nullptr;
@@ -192,6 +201,9 @@ CorrectionSettings ToCorrectionSettings(const SharedHandCorrection& shared) {
 	settings.clampEnabled = shared.clampEnabled != 0;
 	settings.center = {shared.centerX, shared.centerY};
 	settings.innerDeadzone = shared.innerDeadzone;
+	settings.outerScale = shared.outerScale;
+	settings.responseCurve = shared.responseCurve;
+	settings.smoothing = shared.smoothing;
 	settings.innerRadius = shared.innerRadius;
 	settings.outerRadius = shared.outerRadius;
 	return settings;
@@ -207,6 +219,72 @@ bool IsClientAlive(std::int64_t nowTicks) noexcept {
 	}
 	const std::uint64_t timeout = static_cast<std::uint64_t>(MonotonicClock::Frequency()) * 2ULL;
 	return static_cast<std::uint64_t>(nowTicks) - heartbeat <= timeout;
+}
+
+ScalarSmoothingState* GetSmoothingState(
+	ControllerHand hand,
+	ScalarSemantic semantic
+) noexcept {
+	if (hand == ControllerHand::Left) {
+		if (semantic == ScalarSemantic::JoystickX) {
+			return &g_leftSmoothingX;
+		}
+		if (semantic == ScalarSemantic::JoystickY) {
+			return &g_leftSmoothingY;
+		}
+	}
+	if (hand == ControllerHand::Right) {
+		if (semantic == ScalarSemantic::JoystickX) {
+			return &g_rightSmoothingX;
+		}
+		if (semantic == ScalarSemantic::JoystickY) {
+			return &g_rightSmoothingY;
+		}
+	}
+	return nullptr;
+}
+
+void ResetSmoothingState(
+	const ComponentBindingSnapshot& binding,
+	float value,
+	std::int64_t timestampTicks
+) noexcept {
+	ScalarSmoothingState* state = GetSmoothingState(binding.hand, binding.semantic);
+	if (state == nullptr) {
+		return;
+	}
+	state->value.store(value, std::memory_order_relaxed);
+	state->timestampTicks.store(timestampTicks, std::memory_order_relaxed);
+}
+
+float ApplyConfiguredSmoothing(
+	const ComponentBindingSnapshot& binding,
+	float value,
+	float smoothing,
+	std::int64_t nowTicks
+) noexcept {
+	ScalarSmoothingState* state = GetSmoothingState(binding.hand, binding.semantic);
+	if (state == nullptr) {
+		return value;
+	}
+
+	const std::int64_t previousTicks = state->timestampTicks.exchange(
+		nowTicks,
+		std::memory_order_relaxed
+	);
+	const float previousValue = state->value.load(std::memory_order_relaxed);
+	float output = value;
+	if (previousTicks > 0 && nowTicks > previousTicks) {
+		output = ApplySmoothing(
+			value,
+			previousValue,
+			smoothing,
+			nowTicks - previousTicks,
+			MonotonicClock::Frequency()
+		);
+	}
+	state->value.store(output, std::memory_order_relaxed);
+	return output;
 }
 
 float ApplyConfiguredCorrection(
@@ -230,17 +308,20 @@ float ApplyConfiguredCorrection(
 	}
 
 	if (!IsClientAlive(nowTicks)) {
+		ResetSmoothingState(binding, rawValue, nowTicks);
 		return rawValue;
 	}
 
 	CorrectionControlSnapshot control;
 	if (!g_sharedMemory->ReadCorrectionControl(control)) {
+		ResetSmoothingState(binding, rawValue, nowTicks);
 		return rawValue;
 	}
 
 	const SharedHandCorrection& shared = binding.hand == ControllerHand::Left ? control.left : control.right;
 	const CorrectionSettings settings = ToCorrectionSettings(shared);
 	if (!settings.enabled) {
+		ResetSmoothingState(binding, rawValue, nowTicks);
 		return rawValue;
 	}
 
@@ -249,8 +330,16 @@ float ApplyConfiguredCorrection(
 		rawStick->y.load(std::memory_order_relaxed),
 	};
 	const CorrectionResult corrected = ApplyCorrection(raw, settings);
+	const float correctedValue = binding.semantic == ScalarSemantic::JoystickX
+		? corrected.output.x
+		: corrected.output.y;
 	correctionApplied = true;
-	return binding.semantic == ScalarSemantic::JoystickX ? corrected.output.x : corrected.output.y;
+	return ApplyConfiguredSmoothing(
+		binding,
+		correctedValue,
+		settings.smoothing,
+		nowTicks
+	);
 }
 
 ControllerHand DetectHand(vr::PropertyContainerHandle_t container) noexcept {
@@ -458,6 +547,14 @@ void RemoveHooks() noexcept {
 	g_leftRaw.y.store(0.0F, std::memory_order_relaxed);
 	g_rightRaw.x.store(0.0F, std::memory_order_relaxed);
 	g_rightRaw.y.store(0.0F, std::memory_order_relaxed);
+	g_leftSmoothingX.value.store(0.0F, std::memory_order_relaxed);
+	g_leftSmoothingX.timestampTicks.store(0, std::memory_order_relaxed);
+	g_leftSmoothingY.value.store(0.0F, std::memory_order_relaxed);
+	g_leftSmoothingY.timestampTicks.store(0, std::memory_order_relaxed);
+	g_rightSmoothingX.value.store(0.0F, std::memory_order_relaxed);
+	g_rightSmoothingX.timestampTicks.store(0, std::memory_order_relaxed);
+	g_rightSmoothingY.value.store(0.0F, std::memory_order_relaxed);
+	g_rightSmoothingY.timestampTicks.store(0, std::memory_order_relaxed);
 	ClearBindings();
 }
 

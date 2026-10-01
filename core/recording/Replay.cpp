@@ -10,6 +10,17 @@ struct RawStick {
 	Vec2 value{};
 };
 
+struct SmoothingState {
+	float value = 0.0F;
+	std::int64_t timestampTicks = 0;
+	bool initialized = false;
+};
+
+struct HandSmoothingState {
+	SmoothingState x{};
+	SmoothingState y{};
+};
+
 struct ComponentTarget {
 	ControllerHand hand = ControllerHand::Unknown;
 	ScalarSemantic semantic = ScalarSemantic::Unknown;
@@ -42,6 +53,30 @@ RawStick* ResolveRawStick(
 	return nullptr;
 }
 
+SmoothingState* ResolveSmoothingState(
+	ControllerHand hand,
+	ScalarSemantic semantic,
+	HandSmoothingState& left,
+	HandSmoothingState& right
+) {
+	HandSmoothingState* handState = nullptr;
+	if (hand == ControllerHand::Left) {
+		handState = &left;
+	} else if (hand == ControllerHand::Right) {
+		handState = &right;
+	}
+	if (handState == nullptr) {
+		return nullptr;
+	}
+	if (semantic == ScalarSemantic::JoystickX) {
+		return &handState->x;
+	}
+	if (semantic == ScalarSemantic::JoystickY) {
+		return &handState->y;
+	}
+	return nullptr;
+}
+
 } // namespace
 
 void RecalculateRecordingOutputs(
@@ -56,6 +91,8 @@ void RecalculateRecordingOutputs(
 
 	RawStick left{{recording.initialLeftX, recording.initialLeftY}};
 	RawStick right{{recording.initialRightX, recording.initialRightY}};
+	HandSmoothingState leftSmoothing;
+	HandSmoothingState rightSmoothing;
 	for (SharedScalarSample& sample : recording.samples) {
 		sample.outputValue = sample.rawValue;
 		sample.flags &= ~kSampleFlagCorrectionApplied;
@@ -84,11 +121,31 @@ void RecalculateRecordingOutputs(
 			continue;
 		}
 
-		if (target.semantic == ScalarSemantic::JoystickX) {
-			sample.outputValue = result.output.x;
-		} else {
-			sample.outputValue = result.output.y;
+		const float correctedValue = target.semantic == ScalarSemantic::JoystickX
+			? result.output.x
+			: result.output.y;
+		SmoothingState* smoothingState = ResolveSmoothingState(
+			target.hand,
+			target.semantic,
+			leftSmoothing,
+			rightSmoothing
+		);
+		float outputValue = correctedValue;
+		if (smoothingState != nullptr) {
+			if (smoothingState->initialized) {
+				outputValue = ApplySmoothing(
+					correctedValue,
+					smoothingState->value,
+					correction->smoothing,
+					sample.timestampTicks - smoothingState->timestampTicks,
+					static_cast<std::int64_t>(recording.qpcFrequency)
+				);
+			}
+			smoothingState->value = outputValue;
+			smoothingState->timestampTicks = sample.timestampTicks;
+			smoothingState->initialized = true;
 		}
+		sample.outputValue = outputValue;
 		sample.flags |= kSampleFlagCorrectionApplied;
 	}
 }

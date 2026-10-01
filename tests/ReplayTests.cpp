@@ -91,6 +91,30 @@ TEST(ReplayTests, UsesRadialDeadzoneAcrossAxes) {
 	EXPECT_FLOAT_EQ(recording.samples[1].outputValue, 0.0F);
 }
 
+TEST(ReplayTests, ReplaysSmoothingUsingRecordedTimestamps) {
+	qss::RecordingData recording;
+	recording.qpcFrequency = 1000;
+	recording.components.push_back(MakeComponent(
+		qss::ControllerHand::Left,
+		qss::ScalarSemantic::JoystickX
+	));
+	recording.samples.push_back({1000, 1, 0, 1.0F, 1.0F, 0.0, 0});
+	recording.samples.push_back({1010, 2, 0, 0.0F, 0.0F, 0.0, 0});
+
+	qss::ReplayCorrectionSettings settings;
+	settings.left.enabled = true;
+	settings.left.centerOffsetEnabled = false;
+	settings.left.innerDeadzoneEnabled = false;
+	settings.left.outerNormalizationEnabled = false;
+	settings.left.smoothing = 1.0F;
+
+	qss::RecalculateRecordingOutputs(recording, settings);
+
+	EXPECT_FLOAT_EQ(recording.samples[0].outputValue, 1.0F);
+	EXPECT_GT(recording.samples[1].outputValue, 0.0F);
+	EXPECT_LT(recording.samples[1].outputValue, 1.0F);
+}
+
 TEST(ReplayTests, LeavesUnknownComponentsPassThrough) {
 	qss::RecordingData recording;
 	recording.components.push_back(MakeComponent(

@@ -8,7 +8,7 @@
 namespace qss {
 
 inline constexpr std::uint32_t kSteamVRSharedMagic = 0x51535331U;
-inline constexpr std::uint32_t kSteamVRSharedVersion = 5;
+inline constexpr std::uint32_t kSteamVRSharedVersion = 6;
 inline constexpr std::size_t kSteamVRMaxScalarComponents = 256;
 inline constexpr std::size_t kSteamVRSampleCapacity = 8192;
 inline constexpr std::size_t kSteamVRComponentPathCapacity = 96;
@@ -17,7 +17,7 @@ inline constexpr std::size_t kSharedOuterDirectionCount = kSharedDirectionCount;
 inline constexpr std::uint32_t kSampleFlagCorrectionApplied = 1U << 0;
 inline constexpr std::uint32_t kSampleFlagUnknownComponent = 1U << 1;
 
-inline constexpr wchar_t kSteamVRSharedMemoryName[] = L"Local\\QuestStickScope.SteamVR.v5";
+inline constexpr wchar_t kSteamVRSharedMemoryName[] = L"Local\\QuestStickScope.SteamVR.v6";
 
 enum class ProbeState : std::uint32_t {
 	Offline = 0,
@@ -68,6 +68,9 @@ struct SharedHandCorrection {
 	float centerX = 0.0F;
 	float centerY = 0.0F;
 	float innerDeadzone = 0.0F;
+	float outerScale = 1.0F;
+	float responseCurve = 0.0F;
+	float smoothing = 0.0F;
 	std::array<float, kSharedDirectionCount> innerRadius{};
 	std::array<float, kSharedDirectionCount> outerRadius{};
 };

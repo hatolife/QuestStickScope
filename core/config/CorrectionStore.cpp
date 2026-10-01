@@ -9,7 +9,7 @@
 namespace qss {
 namespace {
 
-constexpr int kFormatVersion = 2;
+constexpr int kFormatVersion = 3;
 
 void SetError(std::string* errorMessage, const std::string& message) {
 	if (errorMessage != nullptr) {
@@ -26,6 +26,9 @@ nlohmann::json ToJson(const SharedHandCorrection& value) {
 		{"clamp_enabled", value.clampEnabled != 0},
 		{"center", {value.centerX, value.centerY}},
 		{"inner_deadzone", value.innerDeadzone},
+		{"outer_scale", value.outerScale},
+		{"response_curve", value.responseCurve},
+		{"smoothing", value.smoothing},
 		{"inner_radius", value.innerRadius},
 		{"outer_radius", value.outerRadius},
 	};
@@ -50,6 +53,9 @@ SharedHandCorrection FromJson(const nlohmann::json& json) {
 	value.centerX = center.at(0).get<float>();
 	value.centerY = center.at(1).get<float>();
 	value.innerDeadzone = json.at("inner_deadzone").get<float>();
+	value.outerScale = json.at("outer_scale").get<float>();
+	value.responseCurve = json.at("response_curve").get<float>();
+	value.smoothing = json.at("smoothing").get<float>();
 
 	const auto& inner = json.at("inner_radius");
 	if (!inner.is_array() || inner.size() != kSharedDirectionCount) {
@@ -69,8 +75,11 @@ SharedHandCorrection FromJson(const nlohmann::json& json) {
 
 	if (!IsFiniteInRange(value.centerX, -2.0F, 2.0F) ||
 		!IsFiniteInRange(value.centerY, -2.0F, 2.0F) ||
-		!IsFiniteInRange(value.innerDeadzone, 0.0F, 0.999F)) {
-		throw std::runtime_error("center or deadzone is outside the valid range");
+		!IsFiniteInRange(value.innerDeadzone, 0.0F, 0.999F) ||
+		!IsFiniteInRange(value.outerScale, 0.25F, 2.0F) ||
+		!IsFiniteInRange(value.responseCurve, -1.0F, 1.0F) ||
+		!IsFiniteInRange(value.smoothing, 0.0F, 1.0F)) {
+		throw std::runtime_error("scalar correction setting is outside the valid range");
 	}
 	for (const float radius : value.innerRadius) {
 		if (!IsFiniteInRange(radius, 0.0F, 0.999F)) {

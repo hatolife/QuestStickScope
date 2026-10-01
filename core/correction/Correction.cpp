@@ -82,8 +82,9 @@ Vec2 ApplyOuterNormalization(
 	if (Length(centered) <= 0.0F) {
 		return {};
 	}
+	const float outerScale = std::clamp(settings.outerScale, 0.25F, 2.0F);
 	const float outerRadius = std::max(
-		InterpolateOuterRadius(centered, settings),
+		InterpolateOuterRadius(centered, settings) * outerScale,
 		kMinimumRange
 	);
 	if (outerRadius <= innerRadius + kMinimumRange) {
@@ -99,6 +100,14 @@ Vec2 ApplyOuterNormalization(
 	return ScaleToRadius(deadzoned, Length(deadzoned) / effectiveOuterRadius);
 }
 
+Vec2 ApplyResponseCurveToVector(Vec2 value, float responseCurve) {
+	const float radius = Length(value);
+	if (radius <= 0.0F) {
+		return {};
+	}
+	return ScaleToRadius(value, EvaluateResponseCurve(radius, responseCurve));
+}
+
 Vec2 ClampUnitCircle(Vec2 value) {
 	const float radius = Length(value);
 	if (radius <= 1.0F) {
@@ -112,6 +121,34 @@ Vec2 ClampUnitCircle(Vec2 value) {
 CorrectionSettings::CorrectionSettings() {
 	innerRadius.fill(0.0F);
 	outerRadius.fill(1.0F);
+}
+
+float EvaluateResponseCurve(float magnitude, float responseCurve) {
+	if (!std::isfinite(magnitude)) {
+		return 0.0F;
+	}
+	magnitude = std::max(magnitude, 0.0F);
+	responseCurve = std::clamp(responseCurve, -1.0F, 1.0F);
+	const float exponent = std::exp2(-responseCurve);
+	return std::pow(magnitude, exponent);
+}
+
+float ApplySmoothing(float input, float previousOutput, float smoothing, std::int64_t deltaTicks, std::int64_t tickFrequency) {
+	input = IsFinite(input) ? input : 0.0F;
+	previousOutput = IsFinite(previousOutput) ? previousOutput : input;
+	smoothing = std::clamp(smoothing, 0.0F, 1.0F);
+	if (smoothing <= 0.0F || deltaTicks <= 0 || tickFrequency <= 0) {
+		return input;
+	}
+	const double deltaSeconds = static_cast<double>(deltaTicks) / static_cast<double>(tickFrequency);
+	if (deltaSeconds <= 0.0 || deltaSeconds > 0.5) {
+		return input;
+	}
+	const double amount = static_cast<double>(smoothing);
+	const double timeConstantSeconds = 0.002 + 0.148 * amount * amount;
+	const double alpha = 1.0 - std::exp(-deltaSeconds / timeConstantSeconds);
+	const float output = previousOutput + (input - previousOutput) * static_cast<float>(alpha);
+	return IsFinite(output) ? output : input;
 }
 
 float InterpolateInnerRadius(Vec2 centeredInput, const CorrectionSettings& settings) {
@@ -130,6 +167,7 @@ CorrectionResult ApplyCorrection(Vec2 input, const CorrectionSettings& settings)
 		result.centered = input;
 		result.deadzoned = input;
 		result.normalized = input;
+		result.curved = input;
 		result.output = input;
 		return result;
 	}
@@ -167,7 +205,10 @@ CorrectionResult ApplyCorrection(Vec2 input, const CorrectionSettings& settings)
 	}
 	result.normalized = Sanitize(result.normalized);
 
-	result.output = result.normalized;
+	result.curved = ApplyResponseCurveToVector(result.normalized, settings.responseCurve);
+	result.curved = Sanitize(result.curved);
+
+	result.output = result.curved;
 	if (settings.clampEnabled) {
 		result.output = ClampUnitCircle(result.output);
 	}

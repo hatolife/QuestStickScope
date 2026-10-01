@@ -11,7 +11,7 @@ namespace qss {
 namespace {
 
 constexpr std::array<char, 8> kMagic = {'Q', 'S', 'S', 'R', 'E', 'C', '1', '\0'};
-constexpr std::uint32_t kFormatVersion = 5;
+constexpr std::uint32_t kFormatVersion = 6;
 constexpr std::uint32_t kMaxComponentCount = 4096;
 constexpr std::uint64_t kMaxSampleCount = 100000000ULL;
 constexpr std::uint64_t kMaxWindowsInputSampleCount = 100000000ULL;
@@ -89,7 +89,10 @@ bool WriteHandCorrection(std::ostream& stream, const SharedHandCorrection& corre
 		!WriteValue(stream, correction.clampEnabled) ||
 		!WriteValue(stream, correction.centerX) ||
 		!WriteValue(stream, correction.centerY) ||
-		!WriteValue(stream, correction.innerDeadzone)) {
+		!WriteValue(stream, correction.innerDeadzone) ||
+		!WriteValue(stream, correction.outerScale) ||
+		!WriteValue(stream, correction.responseCurve) ||
+		!WriteValue(stream, correction.smoothing)) {
 		return false;
 	}
 	for (const float radius : correction.innerRadius) {
@@ -113,7 +116,10 @@ bool ReadHandCorrection(std::istream& stream, SharedHandCorrection& correction) 
 		!ReadValue(stream, correction.clampEnabled) ||
 		!ReadValue(stream, correction.centerX) ||
 		!ReadValue(stream, correction.centerY) ||
-		!ReadValue(stream, correction.innerDeadzone)) {
+		!ReadValue(stream, correction.innerDeadzone) ||
+		!ReadValue(stream, correction.outerScale) ||
+		!ReadValue(stream, correction.responseCurve) ||
+		!ReadValue(stream, correction.smoothing)) {
 		return false;
 	}
 	for (float& radius : correction.innerRadius) {

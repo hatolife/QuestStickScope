@@ -112,6 +112,9 @@ qss::SharedHandCorrection ToSharedCorrection(const qss::CorrectionSettings& sett
 	shared.centerX = settings.center.x;
 	shared.centerY = settings.center.y;
 	shared.innerDeadzone = settings.innerDeadzone;
+	shared.outerScale = settings.outerScale;
+	shared.responseCurve = settings.responseCurve;
+	shared.smoothing = settings.smoothing;
 	shared.innerRadius = settings.innerRadius;
 	shared.outerRadius = settings.outerRadius;
 	return shared;
@@ -126,6 +129,9 @@ qss::CorrectionSettings ToCorrectionSettings(const qss::SharedHandCorrection& sh
 	settings.clampEnabled = shared.clampEnabled != 0;
 	settings.center = {shared.centerX, shared.centerY};
 	settings.innerDeadzone = shared.innerDeadzone;
+	settings.outerScale = shared.outerScale;
+	settings.responseCurve = shared.responseCurve;
+	settings.smoothing = shared.smoothing;
 	settings.innerRadius = shared.innerRadius;
 	settings.outerRadius = shared.outerRadius;
 	return settings;
