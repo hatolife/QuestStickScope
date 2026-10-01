@@ -863,10 +863,13 @@ const char* SemanticName(qss::ScalarSemantic semantic) {
 void DrawStickPlot(
 	const char* label,
 	const qss::LiveStickState& stick,
+	const qss::SharedHandCorrection* correction,
 	const std::deque<qss::StickPointSample>* history = nullptr
 ) {
-	const double x = stick.x.rawValue;
-	const double y = stick.y.rawValue;
+	const double rawX = stick.x.rawValue;
+	const double rawY = stick.y.rawValue;
+	const double outputX = stick.x.outputValue;
+	const double outputY = stick.y.outputValue;
 	const float availableWidth = ImGui::GetContentRegionAvail().x;
 	const float plotSize = std::min(availableWidth, 380.0F);
 	if (availableWidth > plotSize) {
@@ -885,6 +888,7 @@ void DrawStickPlot(
 		ImPlot::SetupAxesLimits(-1.1, 1.1, -1.1, 1.1, ImGuiCond_Always);
 
 		constexpr std::size_t circlePointCount = 129;
+		constexpr std::size_t rangePointCount = qss::kSharedDirectionCount + 1;
 		constexpr double pi = 3.14159265358979323846;
 		std::array<double, circlePointCount> circleX{};
 		std::array<double, circlePointCount> circleY{};
@@ -902,22 +906,88 @@ void DrawStickPlot(
 			static_cast<int>(circlePointCount)
 		);
 
+		if (correction != nullptr && correction->enabled != 0) {
+			std::array<double, rangePointCount> innerX{};
+			std::array<double, rangePointCount> innerY{};
+			std::array<double, rangePointCount> outerX{};
+			std::array<double, rangePointCount> outerY{};
+			const double centerX = correction->centerOffsetEnabled != 0
+				? static_cast<double>(correction->centerX)
+				: 0.0;
+			const double centerY = correction->centerOffsetEnabled != 0
+				? static_cast<double>(correction->centerY)
+				: 0.0;
+			const double outerScale = std::clamp(
+				static_cast<double>(correction->outerScale),
+				0.25,
+				2.0
+			);
+			for (std::size_t point = 0; point < rangePointCount; ++point) {
+				const std::size_t direction = point % qss::kSharedDirectionCount;
+				const double angle =
+					2.0 * pi * static_cast<double>(direction) /
+					static_cast<double>(qss::kSharedDirectionCount);
+				const double cosine = std::cos(angle);
+				const double sine = std::sin(angle);
+				const double innerRadius = correction->innerDeadzoneEnabled != 0
+					? std::max(
+						static_cast<double>(correction->innerDeadzone),
+						static_cast<double>(correction->innerRadius[direction])
+					)
+					: 0.0;
+				const double outerRadius = correction->outerNormalizationEnabled != 0
+					? static_cast<double>(correction->outerRadius[direction]) * outerScale
+					: 1.0;
+				innerX[point] = centerX + cosine * innerRadius;
+				innerY[point] = centerY + sine * innerRadius;
+				outerX[point] = centerX + cosine * outerRadius;
+				outerY[point] = centerY + sine * outerRadius;
+			}
+			if (correction->innerDeadzoneEnabled != 0) {
+				ImPlot::PlotLine(
+					"Deadzone",
+					innerX.data(),
+					innerY.data(),
+					static_cast<int>(rangePointCount)
+				);
+			}
+			if (correction->outerNormalizationEnabled != 0) {
+				ImPlot::PlotLine(
+					"Max zone",
+					outerX.data(),
+					outerY.data(),
+					static_cast<int>(rangePointCount)
+				);
+			}
+		}
+
 		if (history != nullptr && history->size() >= 2) {
-			std::vector<double> trailX(history->size());
-			std::vector<double> trailY(history->size());
+			std::vector<double> rawTrailX(history->size());
+			std::vector<double> rawTrailY(history->size());
+			std::vector<double> outputTrailX(history->size());
+			std::vector<double> outputTrailY(history->size());
 			for (std::size_t index = 0; index < history->size(); ++index) {
-				trailX[index] = (*history)[index].raw.x;
-				trailY[index] = (*history)[index].raw.y;
+				rawTrailX[index] = (*history)[index].raw.x;
+				rawTrailY[index] = (*history)[index].raw.y;
+				outputTrailX[index] = (*history)[index].output.x;
+				outputTrailY[index] = (*history)[index].output.y;
 			}
 			ImPlot::PlotLine(
 				"Raw trail",
-				trailX.data(),
-				trailY.data(),
+				rawTrailX.data(),
+				rawTrailY.data(),
+				static_cast<int>(history->size())
+			);
+			ImPlot::PlotLine(
+				"Output trail",
+				outputTrailX.data(),
+				outputTrailY.data(),
 				static_cast<int>(history->size())
 			);
 		}
 		if (stick.x.available && stick.y.available) {
-			ImPlot::PlotScatter("Current", &x, &y, 1);
+			ImPlot::PlotScatter("Raw", &rawX, &rawY, 1);
+			ImPlot::PlotScatter("Output", &outputX, &outputY, 1);
 		}
 		ImPlot::EndPlot();
 	}
@@ -1019,6 +1089,39 @@ void DrawPipeline(const GuiState& state) {
 	ImGui::EndChild();
 }
 
+void DrawResponseCurvePreview(float responseCurve) {
+	constexpr std::size_t pointCount = 65;
+	std::array<double, pointCount> input{};
+	std::array<double, pointCount> output{};
+	for (std::size_t index = 0; index < pointCount; ++index) {
+		const float value = static_cast<float>(index) /
+			static_cast<float>(pointCount - 1);
+		input[index] = value;
+		output[index] = qss::EvaluateResponseCurve(value, responseCurve);
+	}
+
+	if (ImPlot::BeginPlot(
+		"##ResponseCurvePreview",
+		ImVec2(-1.0F, 150.0F),
+		ImPlotFlags_NoLegend
+	)) {
+		ImPlot::SetupAxes(
+			"Input",
+			"Output",
+			ImPlotAxisFlags_Lock,
+			ImPlotAxisFlags_Lock
+		);
+		ImPlot::SetupAxesLimits(0.0, 1.0, 0.0, 1.0, ImGuiCond_Always);
+		ImPlot::PlotLine(
+			"Curve",
+			input.data(),
+			output.data(),
+			static_cast<int>(pointCount)
+		);
+		ImPlot::EndPlot();
+	}
+}
+
 bool DrawCorrectionControls(qss::SharedHandCorrection& correction) {
 	bool changed = false;
 	bool enabled = correction.enabled != 0;
@@ -1032,28 +1135,84 @@ bool DrawCorrectionControls(qss::SharedHandCorrection& correction) {
 		correction.centerOffsetEnabled = centerEnabled ? 1U : 0U;
 		changed = true;
 	}
+	ImGui::SetNextItemWidth(-1.0F);
 	float center[2] = {correction.centerX, correction.centerY};
-	if (ImGui::DragFloat2("Center X/Y", center, 0.001F, -0.5F, 0.5F, "%.4f")) {
+	if (ImGui::DragFloat2("Center X/Y", center, 0.001F, -0.5F, 0.5F, "%+.4f")) {
 		correction.centerX = center[0];
 		correction.centerY = center[1];
 		changed = true;
 	}
 
-	bool deadzoneEnabled = correction.innerDeadzoneEnabled != 0;
-	if (ImGui::Checkbox("Inner deadzone", &deadzoneEnabled)) {
-		correction.innerDeadzoneEnabled = deadzoneEnabled ? 1U : 0U;
-		changed = true;
-	}
-	if (ImGui::SliderFloat("Minimum deadzone radius", &correction.innerDeadzone, 0.0F, 0.5F, "%.4f")) {
-		changed = true;
+	if (ImGui::BeginTabBar("StickTuningTabs")) {
+		if (ImGui::BeginTabItem("Deadzone")) {
+			bool deadzoneEnabled = correction.innerDeadzoneEnabled != 0;
+			if (ImGui::Checkbox("Directional deadzone enabled", &deadzoneEnabled)) {
+				correction.innerDeadzoneEnabled = deadzoneEnabled ? 1U : 0U;
+				changed = true;
+			}
+			float percent = correction.innerDeadzone * 100.0F;
+			ImGui::SetNextItemWidth(-1.0F);
+			if (ImGui::SliderFloat("Minimum deadzone", &percent, 0.0F, 50.0F, "%.1f%%")) {
+				correction.innerDeadzone = percent / 100.0F;
+				changed = true;
+			}
+			ImGui::TextDisabled(
+				"The calibrated 360-direction inner boundary is combined with this minimum."
+			);
+			ImGui::EndTabItem();
+		}
+		if (ImGui::BeginTabItem("Max zone")) {
+			bool outerEnabled = correction.outerNormalizationEnabled != 0;
+			if (ImGui::Checkbox("Directional max-zone enabled", &outerEnabled)) {
+				correction.outerNormalizationEnabled = outerEnabled ? 1U : 0U;
+				changed = true;
+			}
+			float percent = correction.outerScale * 100.0F;
+			ImGui::SetNextItemWidth(-1.0F);
+			if (ImGui::SliderFloat("Outer scale", &percent, 50.0F, 150.0F, "%.1f%%")) {
+				correction.outerScale = percent / 100.0F;
+				changed = true;
+			}
+			ImGui::TextDisabled(
+				"Scales the calibrated 360-direction outer boundary before normalization."
+			);
+			ImGui::EndTabItem();
+		}
+		if (ImGui::BeginTabItem("Curve")) {
+			ImGui::SetNextItemWidth(-1.0F);
+			if (ImGui::SliderFloat(
+				"Response curve",
+				&correction.responseCurve,
+				-1.0F,
+				1.0F,
+				"%+.2f"
+			)) {
+				changed = true;
+			}
+			ImGui::TextDisabled("0 is linear. Positive values increase mid-range response.");
+			DrawResponseCurvePreview(correction.responseCurve);
+			ImGui::EndTabItem();
+		}
+		if (ImGui::BeginTabItem("Smooth")) {
+			float percent = correction.smoothing * 100.0F;
+			ImGui::SetNextItemWidth(-1.0F);
+			if (ImGui::SliderFloat("Smoothing", &percent, 0.0F, 100.0F, "%.1f%%")) {
+				correction.smoothing = percent / 100.0F;
+				changed = true;
+			}
+			ImGui::TextDisabled(
+				"0% is off. Higher values suppress jitter but add response latency."
+			);
+			ImGui::EndTabItem();
+		}
+		ImGui::EndTabBar();
 	}
 
-	bool outerEnabled = correction.outerNormalizationEnabled != 0;
-	if (ImGui::Checkbox("Outer normalization", &outerEnabled)) {
-		correction.outerNormalizationEnabled = outerEnabled ? 1U : 0U;
+	bool clampEnabled = correction.clampEnabled != 0;
+	if (ImGui::Checkbox("Clamp to unit circle", &clampEnabled)) {
+		correction.clampEnabled = clampEnabled ? 1U : 0U;
 		changed = true;
 	}
-	ImGui::TextDisabled("Calibration uses 360 one-degree inner/outer radius entries.");
 	return changed;
 }
 
@@ -1094,7 +1253,7 @@ void DrawLiveView(GuiState& state) {
 	const float columnWidth = std::max(320.0F, (availableWidth - 12.0F) * 0.5F);
 	ImGui::BeginChild("LeftStick", ImVec2(columnWidth, 620.0F), ImGuiChildFlags_Borders);
 	ImGui::SeparatorText("Left Stick");
-	DrawStickPlot("##LeftXY", left, &state.leftHistory);
+	DrawStickPlot("##LeftXY", left, state.correctionLoaded ? &state.leftCorrection : nullptr, &state.leftHistory);
 	ImGui::PushID("LeftCorrection");
 	if (state.correctionLoaded && DrawCorrectionControls(state.leftCorrection)) {
 		state.MarkCorrectionDirty();
@@ -1104,7 +1263,7 @@ void DrawLiveView(GuiState& state) {
 	ImGui::SameLine();
 	ImGui::BeginChild("RightStick", ImVec2(0.0F, 620.0F), ImGuiChildFlags_Borders);
 	ImGui::SeparatorText("Right Stick");
-	DrawStickPlot("##RightXY", right, &state.rightHistory);
+	DrawStickPlot("##RightXY", right, state.correctionLoaded ? &state.rightCorrection : nullptr, &state.rightHistory);
 	ImGui::PushID("RightCorrection");
 	if (state.correctionLoaded && DrawCorrectionControls(state.rightCorrection)) {
 		state.MarkCorrectionDirty();
