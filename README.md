@@ -16,6 +16,9 @@ QuestStickScope は、Meta Quest 3 + Touch Plus Controller + Virtual Desktop + S
 - Center Offset
 - 360方向（1°刻み）Directional Inner Deadzone
 - 360方向（1°刻み）Directional Outer Normalization
+- Max-zone 全体スケール
+- 半径ベース Response Curve（-1.0〜+1.0）
+- 時間ベース Smoothing（0〜100%）
 - Clamp
 - GUI heartbeat が途絶えた場合の自動パススルー
 - 補正前後の同時記録
@@ -23,8 +26,10 @@ QuestStickScope は、Meta Quest 3 + Touch Plus Controller + Virtual Desktop + S
 ### GUI / Diagnostics
 
 - Dear ImGui + ImPlot + Direct3D 11
-- 左右スティック XY 表示
-- 直近軌跡
+- 左右スティック XY の raw / output 同時表示
+- raw / output の直近軌跡
+- Deadzone / Max zone の360方向境界オーバーレイ
+- Deadzone / Max zone / Curve / Smooth の左右個別調整
 - 10秒時系列 Raw X/Y / Output X/Y
 - 平均、最小最大、標準偏差、半径、更新Hz
 - scalar component 一覧
@@ -58,6 +63,7 @@ QuestStickScope は、Meta Quest 3 + Touch Plus Controller + Virtual Desktop + S
 - 保存済み記録のGUI読込
 - Replay位置の移動
 - 現在の補正設定を同じ記録へ再適用
+- Smoothing は記録済み timestamp / QPC frequency を使って再現
 
 SteamVR Probe の詳細は [docs/steamvr-probe.md](docs/steamvr-probe.md) を参照してください。
 

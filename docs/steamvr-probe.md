@@ -35,12 +35,18 @@ RAW
  |
  +-- 360-direction Outer Normalization
  |
+ +-- Max-zone Scale
+ |
+ +-- Response Curve
+ |
  +-- Clamp
+ |
+ +-- Smoothing
  |
 OUTPUT
 ```
 
-GUIから左右それぞれのCenter Offset、1°刻み360方向のInner/Outer半径テーブル、Clamp設定を共有メモリへ配布する。
+GUIから左右それぞれのCenter Offset、1°刻み360方向のInner/Outer半径テーブル、Max-zone Scale、Response Curve、Smoothing、Clamp設定を共有メモリへ配布する。
 
 方向別補正は、中心補正後の入力角度について隣接する1°テーブル値を補間して使用する。
 
