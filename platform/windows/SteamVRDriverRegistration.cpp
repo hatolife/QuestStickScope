@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace qss {
@@ -209,12 +210,28 @@ ProcessResult RunProcess(const std::filesystem::path& executable, const std::vec
 		commandLine += QuoteArgument(argument);
 	}
 
+	HANDLE inputHandle = ::CreateFileW(
+		L"NUL",
+		GENERIC_READ,
+		FILE_SHARE_READ | FILE_SHARE_WRITE,
+		&securityAttributes,
+		OPEN_EXISTING,
+		FILE_ATTRIBUTE_NORMAL,
+		nullptr
+	);
+	if(inputHandle == INVALID_HANDLE_VALUE) {
+		result.error = "CreateFileW(NUL) failed: " + std::to_string(::GetLastError());
+		::CloseHandle(readPipe);
+		::CloseHandle(writePipe);
+		return result;
+	}
+
 	STARTUPINFOW startupInfo{};
 	startupInfo.cb = sizeof(startupInfo);
 	startupInfo.dwFlags = STARTF_USESTDHANDLES;
 	startupInfo.hStdOutput = writePipe;
 	startupInfo.hStdError = writePipe;
-	startupInfo.hStdInput = ::GetStdHandle(STD_INPUT_HANDLE);
+	startupInfo.hStdInput = inputHandle;
 
 	PROCESS_INFORMATION processInfo{};
 	std::vector<wchar_t> mutableCommandLine(commandLine.begin(), commandLine.end());
@@ -231,6 +248,7 @@ ProcessResult RunProcess(const std::filesystem::path& executable, const std::vec
 		&startupInfo,
 		&processInfo
 	);
+	::CloseHandle(inputHandle);
 	::CloseHandle(writePipe);
 	if(!created) {
 		result.error = "CreateProcessW failed: " + std::to_string(::GetLastError());
