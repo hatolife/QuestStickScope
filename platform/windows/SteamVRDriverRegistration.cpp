@@ -292,10 +292,7 @@ std::vector<std::filesystem::path> ParseQuestStickScopePaths(const std::string& 
 			if(separator != std::wstring::npos) {
 				const std::wstring label = Trim(line.substr(0, separator));
 				const std::filesystem::path path = ToDriverRoot(line.substr(separator + 3));
-				if(!path.empty() && (EqualsIgnoreCase(label, kDriverName) || EqualsIgnoreCase(path.filename().native(), kDriverName))) {
-					const bool duplicate = std::any_of(paths.begin(), paths.end(), [&](const std::filesystem::path& existing){ return PathsEqual(existing, path); });
-					if(!duplicate){ paths.push_back(path); }
-				}
+				if(!path.empty() && (EqualsIgnoreCase(label, kDriverName) || EqualsIgnoreCase(path.filename().native(), kDriverName))){ paths.push_back(path); }
 			}
 		}
 		if(end == std::wstring::npos){ break; }
@@ -371,41 +368,66 @@ SteamVRDriverRegistrationResult EnsureSteamVRDriverRegistration() {
 	}
 
 	const std::vector<std::filesystem::path> knownPaths = ParseQuestStickScopePaths(showResult.output);
+	const std::size_t currentPathCount = static_cast<std::size_t>(std::count_if(knownPaths.begin(), knownPaths.end(), [&](const std::filesystem::path& path){ return PathsEqual(path, result.driverRoot); }));
 	const bool hasOldPath = std::any_of(knownPaths.begin(), knownPaths.end(), [&](const std::filesystem::path& path){ return !PathsEqual(path, result.driverRoot); });
-	const bool currentRegistration = findExitCode == 0 && PathsEqual(foundDriverRoot, result.driverRoot) && !hasOldPath;
+	const bool currentRegistration = findExitCode == 0 && PathsEqual(foundDriverRoot, result.driverRoot) && currentPathCount == 1 && !hasOldPath;
 	if(currentRegistration) {
 		result.success = true;
 		result.message = "SteamVR driver registration is current.";
 		return result;
 	}
 
-	if(findExitCode == 0 || findExitCode == 2) {
-		ProcessResult removeByNameResult;
-		if(!RunVrPathReg(vrPathReg, {L"removedriverswithname", kDriverName}, removeByNameResult, error)) {
+	const bool rebuildRegistration = findExitCode == 2 || findExitCode == 0 && !PathsEqual(foundDriverRoot, result.driverRoot);
+	for(int pass = 0; pass < 16; ++pass) {
+		ProcessResult cleanupShowResult;
+		if(!RunVrPathReg(vrPathReg, {L"show"}, cleanupShowResult, error)) {
 			result.message = error;
 			return result;
 		}
-		if(GetSignedExitCode(removeByNameResult.exitCode) != 0) {
-			result.message = "vrpathreg.exe removedriverswithname failed with exit code " + std::to_string(GetSignedExitCode(removeByNameResult.exitCode)) + ".";
+		if(GetSignedExitCode(cleanupShowResult.exitCode) != 0) {
+			result.message = "vrpathreg.exe show failed during cleanup with exit code " + std::to_string(GetSignedExitCode(cleanupShowResult.exitCode)) + ".";
+			return result;
+		}
+
+		const std::vector<std::filesystem::path> cleanupPaths = ParseQuestStickScopePaths(cleanupShowResult.output);
+		auto removable = cleanupPaths.end();
+		if(rebuildRegistration) {
+			removable = cleanupPaths.begin();
+		}else{
+			removable = std::find_if(cleanupPaths.begin(), cleanupPaths.end(), [&](const std::filesystem::path& path){ return !PathsEqual(path, result.driverRoot); });
+		}
+		if(removable == cleanupPaths.end()){ break; }
+		if(!RemoveRegistrationPath(vrPathReg, *removable, error)) {
+			result.message = error;
+			return result;
+		}
+		result.changed = true;
+	}
+	if(rebuildRegistration) {
+		ProcessResult cleanupVerifyResult;
+		if(!RunVrPathReg(vrPathReg, {L"finddriver", kDriverName}, cleanupVerifyResult, error)) {
+			result.message = error;
+			return result;
+		}
+		if(GetSignedExitCode(cleanupVerifyResult.exitCode) != 1) {
+			result.message = "Old SteamVR driver registration could not be removed completely.";
+			return result;
+		}
+	}else if(findExitCode == 0 && PathsEqual(foundDriverRoot, result.driverRoot)) {
+		ProcessResult verifyCurrentResult;
+		if(!RunVrPathReg(vrPathReg, {L"finddriver", kDriverName}, verifyCurrentResult, error)) {
+			result.message = error;
+			return result;
+		}
+		if(GetSignedExitCode(verifyCurrentResult.exitCode) == 0 && PathsEqual(ParseFindDriverPath(verifyCurrentResult), result.driverRoot)) {
+			result.success = true;
+			result.changed = true;
+			result.registeredDriverRoot = result.driverRoot;
+			result.message = "Old SteamVR driver registration was removed. Restart SteamVR if it is running.";
 			return result;
 		}
 	}
 
-	ProcessResult remainingResult;
-	if(!RunVrPathReg(vrPathReg, {L"show"}, remainingResult, error)) {
-		result.message = error;
-		return result;
-	}
-	if(GetSignedExitCode(remainingResult.exitCode) != 0) {
-		result.message = "vrpathreg.exe show failed after cleanup with exit code " + std::to_string(GetSignedExitCode(remainingResult.exitCode)) + ".";
-		return result;
-	}
-	for(const std::filesystem::path& path : ParseQuestStickScopePaths(remainingResult.output)) {
-		if(!RemoveRegistrationPath(vrPathReg, path, error)) {
-			result.message = error;
-			return result;
-		}
-	}
 
 	ProcessResult addResult;
 	if(!RunVrPathReg(vrPathReg, {L"adddriver", result.driverRoot.native()}, addResult, error)) {
