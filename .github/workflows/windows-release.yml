@@ -92,7 +92,9 @@ jobs:
             "build/windows-release/QuestStickScopeCli.exe",
             "build/windows-release/steamvr-driver/queststickscope/driver.vrdrivermanifest",
             "build/windows-release/steamvr-driver/queststickscope/bin/win64/driver_queststickscope.dll",
-            "build/windows-release/steamvr-driver/queststickscope/bin/win64/openvr_api.dll"
+            "build/windows-release/steamvr-driver/queststickscope/bin/win64/openvr_api.dll",
+            "tools/Register-SteamVRDriver.bat",
+            "tools/Unregister-SteamVRDriver.bat"
           )
           foreach ($path in $required) {
             if (-not (Test-Path $path)) {
@@ -111,6 +113,8 @@ jobs:
           Copy-Item "tools" $root -Recurse
           Copy-Item "tools/Register-SteamVRDriver.ps1" $root
           Copy-Item "tools/Unregister-SteamVRDriver.ps1" $root
+          Copy-Item "tools/Register-SteamVRDriver.bat" $root
+          Copy-Item "tools/Unregister-SteamVRDriver.bat" $root
           Copy-Item "tools/Diagnose-SteamVRDriver.ps1" $root
           Copy-Item "README.md" $root
           Copy-Item "PLAN.md" $root

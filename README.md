@@ -101,10 +101,14 @@ build/windows-debug/
 
 ## SteamVR Probe の登録
 
-Release ZIPを展開した場合は、ZIP直下の登録スクリプトを実行します。
+Release ZIPを展開した場合は、ZIP直下の `Register-SteamVRDriver.bat` をダブルクリックすると登録できます。
+削除する場合は `Unregister-SteamVRDriver.bat` をダブルクリックします。
+
+PowerShellから直接実行する場合:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\Register-SteamVRDriver.ps1
+powershell -ExecutionPolicy Bypass -File .\Unregister-SteamVRDriver.ps1
 ```
 
 開発ツリーから実行する場合は次のスクリプトを使用できます。
