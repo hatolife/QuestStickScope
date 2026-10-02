@@ -47,12 +47,10 @@ jobs:
           "QSS_SHORT_HASH=$shortHash" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           Write-Host "Release tag: $tag"
 
-      - name: Validate Windows PowerShell scripts
+      - name: Validate diagnostic PowerShell script
         shell: powershell
         run: |
           $files = @(
-            "tools/Register-SteamVRDriver.ps1",
-            "tools/Unregister-SteamVRDriver.ps1",
             "tools/Diagnose-SteamVRDriver.ps1"
           )
           foreach ($file in $files) {
@@ -93,8 +91,7 @@ jobs:
             "build/windows-release/steamvr-driver/queststickscope/driver.vrdrivermanifest",
             "build/windows-release/steamvr-driver/queststickscope/bin/win64/driver_queststickscope.dll",
             "build/windows-release/steamvr-driver/queststickscope/bin/win64/openvr_api.dll",
-            "tools/Register-SteamVRDriver.bat",
-            "tools/Unregister-SteamVRDriver.bat"
+            "tools/Diagnose-SteamVRDriver.ps1"
           )
           foreach ($path in $required) {
             if (-not (Test-Path $path)) {
@@ -110,11 +107,6 @@ jobs:
           Copy-Item "build/windows-release/QuestStickScope.exe" $root
           Copy-Item "build/windows-release/QuestStickScopeCli.exe" $root
           Copy-Item "build/windows-release/steamvr-driver" $root -Recurse
-          Copy-Item "tools" $root -Recurse
-          Copy-Item "tools/Register-SteamVRDriver.ps1" $root
-          Copy-Item "tools/Unregister-SteamVRDriver.ps1" $root
-          Copy-Item "tools/Register-SteamVRDriver.bat" $root
-          Copy-Item "tools/Unregister-SteamVRDriver.bat" $root
           Copy-Item "tools/Diagnose-SteamVRDriver.ps1" $root
           Copy-Item "README.md" $root
           Copy-Item "PLAN.md" $root

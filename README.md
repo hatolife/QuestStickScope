@@ -101,24 +101,20 @@ build/windows-debug/
 
 ## SteamVR Probe の登録
 
-Release ZIPを展開した場合は、ZIP直下の `Register-SteamVRDriver.bat` をダブルクリックすると登録できます。
-削除する場合は `Unregister-SteamVRDriver.bat` をダブルクリックします。
+`QuestStickScope.exe` は起動時に SteamVR driver の登録状態を自動確認します。
 
-PowerShellから直接実行する場合:
+- 配布ZIPまたはビルドディレクトリの `steamvr-driver/queststickscope` を現在のdriver rootとして扱います。
+- SteamVRのインストール先は公式のアンインストールレジストリ情報から検出し、標準インストール先もフォールバックとして確認します。
+- `vrpathreg finddriver queststickscope` で現在の登録先を確認します。
+- 未登録なら自動登録します。
+- 別の展開先を指している旧登録、重複登録、残存している旧 `queststickscope` driver path があれば削除してから現在のdriver rootを登録します。
+- 既に現在のdriver rootだけが登録済みなら何もしません。
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\Register-SteamVRDriver.ps1
-powershell -ExecutionPolicy Bypass -File .\Unregister-SteamVRDriver.ps1
-```
+登録内容を変更した起動ではGUI上部とDiagnosticsに再起動案内を表示します。
+SteamVRが起動中だった場合は、一度SteamVRを完全終了して再起動すると新しいProbeが読み込まれます。
 
-開発ツリーから実行する場合は次のスクリプトを使用できます。
-
-```powershell
-powershell -ExecutionPolicy Bypass -File tools/Register-SteamVRDriver.ps1
-```
-
-スクリプトはRelease配置とDebug/Releaseビルド配置を自動判定し、SteamVRのインストール先はSteamVR公式のアンインストールレジストリ情報から自動検出します。
-SteamVRが起動中でも登録できますが、ProbeがロードされるのはSteamVRを完全終了して再起動した後です。
+登録・解除用のBAT/PowerShellスクリプトは不要です。
+GUIを起動せず手動で登録解除する必要がある場合だけ、SteamVR付属の `vrpathreg.exe removedriverswithname queststickscope` を使用してください。
 
 SteamVR と Virtual Desktop を起動した後、GUIを起動します。
 
@@ -132,32 +128,17 @@ CLIで Probe 状態を確認する場合:
 build/windows-debug/QuestStickScopeCli.exe --steamvr-status
 ```
 
-登録解除:
-
-Release ZIP:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\Unregister-SteamVRDriver.ps1
-```
-
-開発ツリー:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File tools/Unregister-SteamVRDriver.ps1
-```
-
 ## 最初の実機確認
 
-1. QuestStickScope の SteamVR driver を登録する。
-2. SteamVR を再起動する。
+1. QuestStickScope を起動し、SteamVR driver の登録状態が `Current` または `Updated` になることを確認する。
+2. `Updated` になった場合は SteamVR を完全終了して再起動する。
 3. Virtual Desktop で Quest 3 を接続する。
-4. QuestStickScope を起動する。
-5. Diagnostics で `SteamVR Probe: Observing` を確認する。
-6. 左右スティックを動かし、Left / Right / Joystick X/Y が更新されるか確認する。
-7. 分類できない scalar がある場合は `<unknown:handle>` の値変化を確認する。
-8. Live で左右XYと時系列が更新されることを確認する。
-9. 補正を有効化し、Raw と Output が変化することを確認する。
-10. QuestStickScope を終了し、入力が元のパススルーへ戻ることを確認する。
+4. Diagnostics で `SteamVR Probe: Observing` を確認する。
+5. 左右スティックを動かし、Left / Right / Joystick X/Y が更新されるか確認する。
+6. 分類できない scalar がある場合は `<unknown:handle>` の値変化を確認する。
+7. Live で左右XYと時系列が更新されることを確認する。
+8. 補正を有効化し、Raw と Output が変化することを確認する。
+9. QuestStickScope を終了し、入力が元のパススルーへ戻ることを確認する。
 
 Virtual Desktop の仮想デスクトップ側は、SteamVRなしでも Diagnostics の Windows W0 / Mouse でイベントを観測できます。
 
@@ -190,7 +171,7 @@ Release には次の ZIP を添付します。
 QuestStickScope-<tag>-windows-amd64.zip
 ```
 
-ZIP には GUI、CLI、SteamVR driver、`openvr_api.dll`、登録/解除スクリプト、README、PLAN を含めます。
+ZIP には GUI、CLI、SteamVR driver、`openvr_api.dll`、診断スクリプト、README、PLAN を含めます。
 
 
 ## SteamVR Probe diagnostics

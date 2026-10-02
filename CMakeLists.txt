@@ -49,6 +49,7 @@ if(WIN32)
 		platform/windows/WindowsRawInputObserver.cpp
 		platform/windows/WindowsXInputObserver.cpp
 		platform/windows/ProcessIdentity.cpp
+		platform/windows/SteamVRDriverRegistration.cpp
 	)
 	target_include_directories(qss_windows_ipc PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 	target_compile_definitions(qss_windows_ipc PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
@@ -56,7 +57,7 @@ if(WIN32)
 
 	target_include_directories(qss_windows_input PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 	target_compile_definitions(qss_windows_input PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
-	target_link_libraries(qss_windows_input PUBLIC qss_platform Xinput9_1_0 bcrypt version)
+	target_link_libraries(qss_windows_input PUBLIC qss_platform Xinput9_1_0 advapi32 bcrypt version)
 endif()
 
 if(QSS_BUILD_APP)

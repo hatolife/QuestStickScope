@@ -81,20 +81,17 @@ build/windows-debug/steamvr-driver/queststickscope/
 
 ## SteamVR へ登録
 
-SteamVR を終了してから実行する。
+GUIの `QuestStickScope.exe` が起動時に登録状態を自動管理する。
 
-```powershell
-powershell -ExecutionPolicy Bypass -File tools/Register-SteamVRDriver.ps1
-```
+1. 実行中の `QuestStickScope.exe` と同じディレクトリにある `steamvr-driver/queststickscope` を現在のdriver rootとして解決する。
+2. SteamVR付属の `vrpathreg.exe finddriver queststickscope` で登録状態を確認する。
+3. 現在のdriver rootだけが登録されていれば変更しない。
+4. 未登録なら現在のdriver rootを登録する。
+5. 別の展開先、重複登録、旧 `queststickscope` path が残っていれば削除してから現在のdriver rootを登録する。
+6. 登録内容を変更した場合はGUIにSteamVR再起動案内を表示する。
 
-Steam ライブラリが標準位置でない場合:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File tools/Register-SteamVRDriver.ps1 `
-	-SteamVRDir "D:\SteamLibrary\steamapps\common\SteamVR"
-```
-
-登録後に SteamVR を再起動する。
+これによりRelease ZIPを別フォルダへ展開して更新した場合も、旧Releaseの登録先を手作業で解除する必要はない。
+SteamVRが既に起動している状態で登録が更新された場合は、SteamVRを完全終了して再起動する。
 
 ## 観測確認
 
@@ -114,11 +111,8 @@ Diagnostics では component path、左右、semantic、raw/output、sequence �
 
 ## 登録解除
 
-SteamVR を終了してから実行する。
-
-```powershell
-powershell -ExecutionPolicy Bypass -File tools/Unregister-SteamVRDriver.ps1
-```
+通常利用では登録解除操作は不要。
+QuestStickScopeを削除する場合は、GUIを終了した後にSteamVR付属の `vrpathreg.exe removedriverswithname queststickscope` を1回実行してからファイルを削除する。
 
 ## フェイルセーフ
 

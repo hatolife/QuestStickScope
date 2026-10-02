@@ -9,6 +9,7 @@
 #include "core/recording/Replay.hpp"
 #include "platform/Clock.hpp"
 #include "platform/windows/SteamVRSharedMemory.hpp"
+#include "platform/windows/SteamVRDriverRegistration.hpp"
 #include "platform/windows/ProcessIdentity.hpp"
 #include "platform/windows/WindowsMouseObserver.hpp"
 #include "platform/windows/WindowsRawInputObserver.hpp"
@@ -206,6 +207,7 @@ constexpr double kCalibrationWaitSeconds = 5.0;
 constexpr double kCalibrationMeasureSeconds = 10.0;
 
 struct GuiState {
+	qss::SteamVRDriverRegistrationResult driverRegistration;
 	qss::SteamVRSharedMemoryReader reader;
 	qss::SteamVRSharedMemoryController controller;
 	qss::SteamVRLiveState live;
@@ -262,7 +264,8 @@ struct GuiState {
 	std::int64_t persistentCorrectionChangedTicks = 0;
 	std::string persistenceStatus;
 
-	explicit GuiState(HWND window) {
+	explicit GuiState(HWND window, qss::SteamVRDriverRegistrationResult registration)
+		: driverRegistration(std::move(registration)) {
 		windowsMouseObserver.Start();
 		windowsRawInputObserver.Start(window);
 		std::string error;
@@ -2009,6 +2012,12 @@ void DrawCompatibilityDiagnostics(GuiState& state) {
 }
 
 void DrawDiagnosticsView(GuiState& state) {
+	ImGui::SeparatorText("SteamVR driver registration");
+	ImGui::Text("Status: %s", state.driverRegistration.success ? (state.driverRegistration.changed ? "Updated" : "Current") : "Error");
+	if(!state.driverRegistration.driverRoot.empty()){ ImGui::TextWrapped("Driver: %s", PathToUtf8(state.driverRegistration.driverRoot).c_str()); }
+	if(!state.driverRegistration.message.empty()){ ImGui::TextWrapped("%s", state.driverRegistration.message.c_str()); }
+	ImGui::Separator();
+
 	if (!state.connected) {
 		ImGui::TextDisabled("SteamVR Probe: Offline");
 		DrawWindowsInputDiagnostics(state);
@@ -2102,6 +2111,13 @@ void DrawMainWindow(GuiState& state) {
 	ImGui::SameLine();
 	ImGui::TextDisabled("SteamVR input observation");
 	ImGui::Separator();
+	if(!state.driverRegistration.success) {
+		ImGui::TextColored(ImVec4(1.0F, 0.45F, 0.30F, 1.0F), "SteamVR driver registration error: %s", state.driverRegistration.message.c_str());
+		ImGui::Separator();
+	}else if(state.driverRegistration.changed) {
+		ImGui::TextColored(ImVec4(1.0F, 0.80F, 0.30F, 1.0F), "%s", state.driverRegistration.message.c_str());
+		ImGui::Separator();
+	}
 
 	if (ImGui::BeginTabBar("MainTabs")) {
 		if (ImGui::BeginTabItem("Live")) {
@@ -2232,6 +2248,8 @@ LRESULT WINAPI WndProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) 
 }
 
 int RunGui(HINSTANCE instance) {
+	qss::SteamVRDriverRegistrationResult driverRegistration = qss::EnsureSteamVRDriverRegistration();
+
 	ImGui_ImplWin32_EnableDpiAwareness();
 	const float scale = ImGui_ImplWin32_GetDpiScaleForMonitor(
 		::MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY)
@@ -2289,7 +2307,7 @@ int RunGui(HINSTANCE instance) {
 	ImGui_ImplWin32_Init(window);
 	ImGui_ImplDX11_Init(g_device, g_deviceContext);
 
-	GuiState state(window);
+	GuiState state(window, std::move(driverRegistration));
 	bool done = false;
 	while (!done) {
 		MSG message{};
