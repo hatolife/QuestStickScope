@@ -403,6 +403,24 @@ SteamVRDriverRegistrationResult EnsureSteamVRDriverRegistration() {
 		}
 		result.changed = true;
 	}
+	ProcessResult cleanupStateResult;
+	if(!RunVrPathReg(vrPathReg, {L"show"}, cleanupStateResult, error)) {
+		result.message = error;
+		return result;
+	}
+	if(GetSignedExitCode(cleanupStateResult.exitCode) != 0) {
+		result.message = "vrpathreg.exe show failed after cleanup with exit code " + std::to_string(GetSignedExitCode(cleanupStateResult.exitCode)) + ".";
+		return result;
+	}
+	const std::vector<std::filesystem::path> remainingPaths = ParseQuestStickScopePaths(cleanupStateResult.output);
+	const bool cleanupIncomplete = rebuildRegistration
+		? !remainingPaths.empty()
+		: std::any_of(remainingPaths.begin(), remainingPaths.end(), [&](const std::filesystem::path& path){ return !PathsEqual(path, result.driverRoot); });
+	if(cleanupIncomplete) {
+		result.message = "Old SteamVR driver registration could not be removed completely.";
+		return result;
+	}
+
 	if(rebuildRegistration) {
 		ProcessResult cleanupVerifyResult;
 		if(!RunVrPathReg(vrPathReg, {L"finddriver", kDriverName}, cleanupVerifyResult, error)) {
