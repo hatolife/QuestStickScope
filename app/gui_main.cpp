@@ -2015,6 +2015,7 @@ void DrawDiagnosticsView(GuiState& state) {
 	ImGui::SeparatorText("SteamVR driver registration");
 	ImGui::Text("Status: %s", state.driverRegistration.success ? (state.driverRegistration.changed ? "Updated" : "Current") : "Error");
 	if(!state.driverRegistration.driverRoot.empty()){ ImGui::TextWrapped("Driver: %s", PathToUtf8(state.driverRegistration.driverRoot).c_str()); }
+	if(!state.driverRegistration.registeredDriverRoot.empty()){ ImGui::TextWrapped("Registered: %s", PathToUtf8(state.driverRegistration.registeredDriverRoot).c_str()); }
 	if(!state.driverRegistration.message.empty()){ ImGui::TextWrapped("%s", state.driverRegistration.message.c_str()); }
 	ImGui::Separator();
 
