@@ -108,8 +108,10 @@ std::filesystem::path ResolveDriverRoot() {
 	if(executableDirectory.empty()){ return {}; }
 	const std::filesystem::path driverRoot = executableDirectory / L"steamvr-driver" / kDriverName;
 	const std::filesystem::path manifest = driverRoot / kDriverManifest;
-	const std::filesystem::path driverDll = driverRoot / L"bin" / L"win64" / L"driver_queststickscope.dll";
-	if(!std::filesystem::is_regular_file(manifest) || !std::filesystem::is_regular_file(driverDll)){ return {}; }
+	const std::filesystem::path binaryDirectory = driverRoot / L"bin" / L"win64";
+	const std::filesystem::path driverDll = binaryDirectory / L"driver_queststickscope.dll";
+	const std::filesystem::path openVrDll = binaryDirectory / L"openvr_api.dll";
+	if(!std::filesystem::is_regular_file(manifest) || !std::filesystem::is_regular_file(driverDll) || !std::filesystem::is_regular_file(openVrDll)){ return {}; }
 	return NormalizePath(driverRoot);
 }
 
