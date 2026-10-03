@@ -65,6 +65,12 @@ std::wstring ToLower(std::wstring value) {
 	return value;
 }
 
+std::wstring NormalizeDriverLabel(std::wstring value) {
+	value = Trim(std::move(value));
+	if(value.size() >= 2 && value.front() == L'[' && value.back() == L']'){ value = Trim(value.substr(1, value.size() - 2)); }
+	return value;
+}
+
 bool EqualsIgnoreCase(std::wstring_view left, std::wstring_view right) {
 	return ToLower(std::wstring(left)) == ToLower(std::wstring(right));
 }
@@ -290,7 +296,7 @@ std::vector<std::filesystem::path> ParseQuestStickScopePaths(const std::string& 
 		if(!line.empty()) {
 			const std::size_t separator = line.find(L" : ");
 			if(separator != std::wstring::npos) {
-				const std::wstring label = Trim(line.substr(0, separator));
+				const std::wstring label = NormalizeDriverLabel(line.substr(0, separator));
 				const std::filesystem::path path = ToDriverRoot(line.substr(separator + 3));
 				if(!path.empty() && (EqualsIgnoreCase(label, kDriverName) || EqualsIgnoreCase(path.filename().native(), kDriverName))){ paths.push_back(path); }
 			}
